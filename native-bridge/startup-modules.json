@@ -1,0 +1,42 @@
+{
+  "formatVersion": 1,
+  "nodeSha256": "3602f2bb1a10f2cbab4c36886218a33c1ab3db87290e73b033c46c77147d0237",
+  "modules": [
+    {
+      "file": "launch-native.cjs",
+      "sha256": "c0073a11099c8da2defb30b2ea4d92f0eae71ea529b62aa1844aba9cda79552b"
+    },
+    {
+      "file": "cdp-pipe.cjs",
+      "sha256": "5f7d7b310b2b76888940d5be083aebb2cc6522f0ff77b1e15c0e08934002ce6c"
+    },
+    {
+      "file": "live-native-bridge.cjs",
+      "sha256": "99bf0e03a7ca917afc4d67ed6ef0c8c6d8ed55c96b1190f6cdad63426a67a42f"
+    },
+    {
+      "file": "oxp3-power-bridge.cjs",
+      "sha256": "3a9785a62bc86571968997ad04d221001b0db67176e2624b89286e68ca2b4e54"
+    },
+    {
+      "file": "runtime-test.cjs",
+      "sha256": "25b16df2e34d056b05ab68abb7304c8b4d3e7c16ae1672a2915b1d2b16d9d1a1"
+    },
+    {
+      "file": "preflight-native.cjs",
+      "sha256": "abfbe9b0ea49d3085f2731a148328b7206b192c1e575a9bb3ce88b304165df61"
+    },
+    {
+      "file": "startup-native.ps1",
+      "sha256": "b56caf03208427f4c031a7359603706b5c90fec5b74fedb345093ceddfc9b96e"
+    },
+    {
+      "file": "startup-native.vbs",
+      "sha256": "2cc976aa49d95b518e6f44e035e674f8dd029c2b2b2e569ca9beb7156cc93770"
+    },
+    {
+      "file": "startup-task-common.ps1",
+      "sha256": "a266d129768ce90377e677252fd08bfc24f1b013a169497b5fb7171946ef0b1c"
+    }
+  ]
+}

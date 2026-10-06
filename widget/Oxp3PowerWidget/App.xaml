@@ -1,0 +1,83 @@
+<Application
+    x:Class="Oxp3PowerWidget.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+    RequestedTheme="Dark">
+  <Application.Resources>
+    <Style x:Key="PowerButton" TargetType="Button">
+      <Setter Property="Background" Value="{ThemeResource SystemControlBackgroundBaseLowBrush}"/><Setter Property="Foreground" Value="{ThemeResource SystemControlForegroundBaseHighBrush}"/>
+      <Setter Property="BorderBrush" Value="Transparent"/><Setter Property="BorderThickness" Value="2"/>
+      <Setter Property="UseSystemFocusVisuals" Value="False"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Button">
+        <Grid>
+          <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="CommonStates">
+              <VisualState x:Name="Normal"/>
+              <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Surface.Background" Value="{ThemeResource SystemControlBackgroundBaseMediumLowBrush}"/></VisualState.Setters></VisualState>
+              <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Surface.Opacity" Value="0.7"/></VisualState.Setters></VisualState>
+              <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Surface.Opacity" Value="0.45"/></VisualState.Setters></VisualState>
+            </VisualStateGroup>
+            <VisualStateGroup x:Name="FocusStates">
+              <VisualState x:Name="Unfocused"/>
+              <VisualState x:Name="Focused"><VisualState.Setters><Setter Target="Surface.BorderBrush" Value="#F2F5F4"/></VisualState.Setters></VisualState>
+              <VisualState x:Name="PointerFocused"/>
+            </VisualStateGroup>
+          </VisualStateManager.VisualStateGroups>
+          <Border x:Name="Surface" Background="{TemplateBinding Background}" BorderBrush="{TemplateBinding BorderBrush}" BorderThickness="{TemplateBinding BorderThickness}" CornerRadius="8" Padding="{TemplateBinding Padding}">
+            <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" HorizontalAlignment="Center" VerticalAlignment="Center"/>
+          </Border>
+        </Grid>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="PowerSlider" TargetType="Slider">
+      <Setter Property="Height" Value="44"/><Setter Property="MinHeight" Value="44"/><Setter Property="UseSystemFocusVisuals" Value="False"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="Slider">
+        <Grid x:Name="SliderContainer" Background="Transparent" Control.IsTemplateFocusTarget="True">
+          <Grid x:Name="HorizontalTemplate" MinHeight="44">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Grid.RowDefinitions><RowDefinition Height="19"/><RowDefinition Height="6"/><RowDefinition Height="19"/></Grid.RowDefinitions>
+            <Rectangle x:Name="HorizontalTrackRect" Grid.Row="1" Grid.ColumnSpan="3" Height="6" Fill="#4B585F" RadiusX="3" RadiusY="3" Margin="10,0"/>
+            <Rectangle x:Name="HorizontalDecreaseRect" Grid.Row="1" Height="6" Fill="#1A9FFF" RadiusX="3" RadiusY="3" Margin="10,0,-10,0"/>
+            <Thumb x:Name="HorizontalThumb" Grid.Column="1" Grid.RowSpan="3" Height="20" Width="20" DataContext="{TemplateBinding Value}" AutomationProperties.AccessibilityView="Raw">
+              <Thumb.Template><ControlTemplate TargetType="Thumb"><Ellipse Fill="#F2F5F4"/></ControlTemplate></Thumb.Template>
+            </Thumb>
+          </Grid>
+        </Grid>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+    <Style x:Key="PowerScopeSwitch" TargetType="CheckBox">
+      <Setter Property="Foreground" Value="#F2F5F4"/><Setter Property="FontSize" Value="14"/><Setter Property="UseSystemFocusVisuals" Value="False"/>
+      <Setter Property="HorizontalContentAlignment" Value="Stretch"/>
+      <Setter Property="Template"><Setter.Value><ControlTemplate TargetType="CheckBox">
+        <Grid>
+          <VisualStateManager.VisualStateGroups>
+            <VisualStateGroup x:Name="CommonStates">
+              <VisualState x:Name="Normal"/>
+              <VisualState x:Name="PointerOver"><VisualState.Setters><Setter Target="Row.Background" Value="{ThemeResource SystemControlBackgroundBaseLowBrush}"/></VisualState.Setters></VisualState>
+              <VisualState x:Name="Pressed"><VisualState.Setters><Setter Target="Row.Opacity" Value="0.7"/></VisualState.Setters></VisualState>
+              <VisualState x:Name="Disabled"><VisualState.Setters><Setter Target="Row.Opacity" Value="0.4"/></VisualState.Setters></VisualState>
+            </VisualStateGroup>
+            <VisualStateGroup x:Name="CheckStates">
+              <VisualState x:Name="Unchecked"/>
+              <VisualState x:Name="Indeterminate"/>
+              <VisualState x:Name="Checked"><VisualState.Setters><Setter Target="Rail.Background" Value="#1A9FFF"/><Setter Target="SwitchThumb.HorizontalAlignment" Value="Right"/></VisualState.Setters></VisualState>
+            </VisualStateGroup>
+            <VisualStateGroup x:Name="FocusStates">
+              <VisualState x:Name="Unfocused"/>
+              <VisualState x:Name="PointerFocused"/>
+              <VisualState x:Name="Focused"><VisualState.Setters><Setter Target="Row.BorderBrush" Value="#F2F5F4"/></VisualState.Setters></VisualState>
+            </VisualStateGroup>
+          </VisualStateManager.VisualStateGroups>
+          <Border x:Name="Row" Background="Transparent" BorderBrush="Transparent" BorderThickness="2" CornerRadius="4" Padding="10,8">
+            <Grid><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="44"/></Grid.ColumnDefinitions>
+              <ContentPresenter Content="{TemplateBinding Content}" ContentTemplate="{TemplateBinding ContentTemplate}" VerticalAlignment="Center"/>
+              <Border x:Name="Rail" Grid.Column="1" Width="42" Height="24" CornerRadius="12" Background="#59636B">
+                <Ellipse x:Name="SwitchThumb" Fill="#F2F5F4" Width="20" Height="20" HorizontalAlignment="Left" Margin="2,0"/>
+              </Border>
+            </Grid>
+          </Border>
+        </Grid>
+      </ControlTemplate></Setter.Value></Setter>
+    </Style>
+  </Application.Resources>
+</Application>

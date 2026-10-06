@@ -1,0 +1,12 @@
+<Project Sdk="Microsoft.NET.Sdk">
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <UseWPF>true</UseWPF>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+    <AssemblyName>OXP3.GamePower.Desktop</AssemblyName>
+  </PropertyGroup>
+  <ItemGroup><Compile Include="..\shared\DeferredSlider.cs" Link="DeferredSlider.cs" /></ItemGroup>
+  <ItemGroup><Compile Include="..\shared\PowerAvailability.cs" Link="PowerAvailability.cs" /></ItemGroup>
+</Project>
