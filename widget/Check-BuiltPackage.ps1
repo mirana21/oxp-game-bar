@@ -47,5 +47,5 @@ try {
         if ($packagedHash -ne (Get-FileHash -LiteralPath $source.FullName -Algorithm SHA256).Hash) { throw ('Helper runtime payload differs: ' + $relative) }
     }
 } finally { $zip.Dispose() }
-Write-Host 'All helper runtime payload hashes match the published helper. PDBs are separate developer symbols.'
+Write-Host 'All helper runtime payload hashes match the published helper.'
 Write-Host 'Package dependency identities and versions passed. Signing, installation, and actual activation remain separate checks.'

@@ -24,6 +24,12 @@ foreach ($test in @('test-live-bridge.cjs', 'test-protocol.cjs')) {
 }
 & (Join-Path $projectRoot 'native-bridge\test-startup-retry.ps1')
 & (Join-Path $projectRoot 'installer\Test-Removal.ps1')
+& (Join-Path $projectRoot 'installer\Test-ReleasePrivacy.ps1')
+& (Join-Path $projectRoot 'installer\Test-Portability.ps1')
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'installer\Test-ReleasePrivacy.ps1')
+Assert-Exit 'Windows PowerShell release privacy tests'
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'installer\Test-Portability.ps1')
+Assert-Exit 'Windows PowerShell installer portability tests'
 & (Join-Path $projectRoot 'Test-GameDiscovery.ps1')
 & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'Test-GameDiscovery.ps1')
 Assert-Exit 'Windows PowerShell Unicode discovery tests'

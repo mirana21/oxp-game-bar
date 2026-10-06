@@ -20,6 +20,7 @@
 *.msix
 *.appx
 *.appxsym
+*.pdb
 *.zip
 bridge-token.txt
 remembered-watts.json

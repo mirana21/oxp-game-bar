@@ -8,6 +8,9 @@
     <AssemblyName>OXP3.PowerWidget.Helper</AssemblyName>
     <PlatformTarget>x64</PlatformTarget>
     <EnableNETAnalyzers>false</EnableNETAnalyzers>
+    <DebugType Condition="'$(Configuration)' == 'Release'">none</DebugType>
+    <DebugSymbols Condition="'$(Configuration)' == 'Release'">false</DebugSymbols>
+    <Deterministic>true</Deterministic>
   </PropertyGroup>
   <ItemGroup>
     <Compile Include="..\shared\DeferredSlider.cs" Link="DeferredSlider.cs" />

@@ -1,8 +1,10 @@
 param([switch]$SkipWidgetBuild, [string]$NodePath, [string]$SignToolPath)
 $ErrorActionPreference='Stop'
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-if (-not $SkipWidgetBuild) { & (Join-Path $projectRoot 'widget\Build-Widget.ps1') -SelfContained }
-$version='0.1.0.26'
+$version='0.1.0.27'
+$runtimeRoot=Join-Path $projectRoot ('artifacts\release-helper-' + [Guid]::NewGuid().ToString('N'))
+$buildReceipt=Join-Path $projectRoot ('artifacts\widget-build-' + [Guid]::NewGuid().ToString('N') + '.json')
+if (-not $SkipWidgetBuild) { & (Join-Path $projectRoot 'widget\Build-Widget.ps1') -SelfContained -HelperDirectory $runtimeRoot -BuildReceiptPath $buildReceipt }
 $destination=Join-Path $projectRoot ('releases\OXP3-Game-Power-' + $version + '-alpha-x64')
 if(Test-Path -LiteralPath $destination){throw 'Release directory already exists. Preserve it or choose a new version before rebuilding.'}
 New-Item -ItemType Directory -Path $destination -Force | Out-Null
@@ -41,9 +43,10 @@ Copy-Item -LiteralPath $node -Destination (Join-Path $destination 'Runtime\node.
 $nodeVersion=(& $node --version).Trim()
 if($nodeVersion -notmatch '^v\d+\.\d+\.\d+$'){throw 'Unexpected runtime version'}
 Invoke-WebRequest -Uri ('https://raw.githubusercontent.com/nodejs/node/'+$nodeVersion+'/LICENSE') -OutFile (Join-Path $destination 'Licenses\Node.txt')
-$runtimeRoot=Join-Path $projectRoot 'artifacts\helper-release-singlefile'
 foreach($name in @('LICENSE.txt','THIRD-PARTY-NOTICES.txt')){if(Test-Path -LiteralPath (Join-Path $runtimeRoot $name)){Copy-Item -LiteralPath (Join-Path $runtimeRoot $name) -Destination (Join-Path $destination ('Licenses\DotNet-'+$name))}}
-$runtimeConfig=Get-Content -LiteralPath (Join-Path $projectRoot 'helper\bin\Release\net8.0-windows\win-x64\OXP3.PowerWidget.Helper.runtimeconfig.json') -Raw|ConvertFrom-Json
+$runtimeConfigPath=Join-Path $projectRoot 'helper\bin\Release\net8.0-windows\win-x64\OXP3.PowerWidget.Helper.runtimeconfig.json'
+if (-not $SkipWidgetBuild) { $runtimeConfigPath=(Get-Content -LiteralPath $buildReceipt -Raw | ConvertFrom-Json).runtimeConfigPath }
+$runtimeConfig=Get-Content -LiteralPath $runtimeConfigPath -Raw|ConvertFrom-Json
 $netRuntimeVersion=($runtimeConfig.runtimeOptions.includedFrameworks|Where-Object name -EQ 'Microsoft.NETCore.App'|Select-Object -First 1).version
 if(-not $netRuntimeVersion){throw 'Bundled .NET runtime version was not found'}
 $nugetRoot=$env:NUGET_PACKAGES
@@ -62,7 +65,7 @@ if (-not (Test-Path -LiteralPath $signTool)) { throw 'Windows SDK signing tool m
 & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Widget\OXP3.GamePower.msix')
 if($LASTEXITCODE -ne 0){throw 'Release package signing failed'}
 $readme=@'
-OXP3 Game Power — alpha 0.1.0.26
+OXP3 Game Power — alpha 0.1.0.27
 
 For Windows 11 x64, Intel ONEXPLAYER 3 and ONEXConsole 0.10.3-fix2.
 
@@ -72,7 +75,7 @@ playing, and the ONEXPLAYER 3's Xbox fullscreen experience lacks quick
 brightness and Night light controls.
 
 This app is in alpha. If you run into trouble, report what happened and any
-error message at https://github.com/mirana21/oxp-game-bar/issues/new.
+error message through the project's GitHub Issues page.
 
 Extract the ZIP, open Setup.exe, and choose Install / Repair.
 Open Xbox Game Bar → Widgets → OXP3 Game Power.
@@ -96,7 +99,11 @@ if($LASTEXITCODE -ne 0){throw 'Setup executable build failed'}
 & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Setup.exe')
 if($LASTEXITCODE -ne 0){throw 'Setup signing failed'}
 foreach($path in @('Setup.exe','Widget\OXP3.GamePower.msix')){& $signTool verify /pa (Join-Path $destination $path);if($LASTEXITCODE -ne 0){throw 'Release signature validation failed'}}
+$expectedFiles=@($release.files.path) + @('release.json','Setup.exe')
+$actualFiles=@(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { $_.FullName.Substring($destination.Length+1) })
+if (Compare-Object $expectedFiles $actualFiles) { throw 'Unexpected file in release staging directory.' }
 $zip=$destination+'.zip'
 Add-Type -AssemblyName System.IO.Compression.FileSystem
 [IO.Compression.ZipFile]::CreateFromDirectory($destination,$zip,[IO.Compression.CompressionLevel]::Optimal,$false)
+& (Join-Path $PSScriptRoot 'Check-ReleasePrivacy.ps1') -Path $zip
 Write-Output ('Alpha distribution bundle created: '+$zip)

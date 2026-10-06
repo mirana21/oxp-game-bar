@@ -28,7 +28,11 @@
     <OutputPath>bin\x64\$(Configuration)\</OutputPath>
     <DefineConstants>TRACE;NETFX_CORE;WINDOWS_UWP</DefineConstants>
     <Optimize>true</Optimize>
-    <DebugType>pdbonly</DebugType>
+    <DebugType>none</DebugType>
+    <DebugSymbols>false</DebugSymbols>
+    <Deterministic>true</Deterministic>
+    <!-- .NET Native generates its own symbols. Keep its CodeView reference relative. -->
+    <NetNativePdbPath>.\</NetNativePdbPath>
     <UseDotNetNativeToolchain Condition="'$(Configuration)' == 'Release'">true</UseDotNetNativeToolchain>
     <UseVSHostingProcess>false</UseVSHostingProcess>
     <HelperPublishDirectory Condition="'$(HelperPublishDirectory)' == ''">..\..\artifacts\helper</HelperPublishDirectory>
@@ -47,7 +51,7 @@
     <Content Include="Assets\SplashScreen.png" />
     <Content Include="Assets\Icons\*.png" />
     <Content Include="Properties\Default.rd.xml" />
-    <Content Include="$(HelperPublishDirectory)\**\*">
+    <Content Include="$(HelperPublishDirectory)\**\*" Exclude="$(HelperPublishDirectory)\**\*.pdb;$(HelperPublishDirectory)\**\*.log">
       <Link>Helper\%(RecursiveDir)%(Filename)%(Extension)</Link>
       <CopyToOutputDirectory>PreserveNewest</CopyToOutputDirectory>
     </Content>

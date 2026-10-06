@@ -65,7 +65,7 @@ function Assert-Compatibility {
 }
 $release = Assert-Bundle
 $runtimeRoot = Join-Path $codeRoot ('Versions\' + $release.version)
-if ([version]$release.version -ne [version]'0.1.0.26') { throw 'Unexpected release version.' }
+if ([version]$release.version -ne [version]'0.1.0.27') { throw 'Unexpected release version.' }
 Assert-StartupAdmin
 if ($Mode -eq 'Bootstrap') {
     # A Task Scheduler action runs outside the launcher's MSIX identity. Stage

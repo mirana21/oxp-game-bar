@@ -12,9 +12,7 @@ This app is in alpha. If you run into trouble, [open an issue](https://github.co
 
 ## Install
 
-A prebuilt public installer is not available yet. Once a public release is available:
-
-1. Download the installer ZIP from [Releases](https://github.com/mirana21/oxp-game-bar/releases) and extract it.
+1. Download the ZIP from [Releases](https://github.com/mirana21/oxp-game-bar/releases) and extract it.
 2. Run **Setup.exe** and choose **Install / Repair**.
 3. Open Xbox Game Bar → **Widgets** → **OXP3 Game Power**.
 
