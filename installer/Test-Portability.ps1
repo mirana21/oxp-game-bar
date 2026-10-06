@@ -14,7 +14,16 @@ if($errors){throw ($errors.Message -join '; ')}
 foreach($name in @('Get-StartupInstallation','Assert-Compatibility')){
     $function=$setupAst.Find({param($node) $node -is [Management.Automation.Language.FunctionDefinitionAst] -and $node.Name -eq $name},$true)
     if(-not $function){throw ('Production installer function missing: '+$name)}
-    . ([scriptblock]::Create($function.Extent.Text))
+    $functionText=$function.Extent.Text
+    if($name -eq 'Assert-Compatibility'){
+        # Hosted CI runs Windows Server. Replace only OS identity reads;
+        # the production Windows 11 condition itself still runs unchanged.
+        $osBuildAdapter='[Environment]::OSVersion.Version.Build'
+        $bitnessAdapter='[Environment]::Is64BitOperatingSystem'
+        if(-not $functionText.Contains($osBuildAdapter) -or -not $functionText.Contains($bitnessAdapter)){throw 'Production OS identity adapters changed.'}
+        $functionText=$functionText.Replace($osBuildAdapter,'$fixture.WindowsBuild').Replace($bitnessAdapter,'$fixture.Is64Bit')
+    }
+    . ([scriptblock]::Create($functionText))
 }
 $codeRoot='C:\PortabilityFixture\Bridge'
 $bundleRoot='C:\PortabilityFixture\ExtractedSetup'
@@ -47,7 +56,7 @@ foreach($account in @(
     @{sid='S-1-5-21-111-222-333-1001';local='C:\Users\PlayerAlpha\AppData\Local'},
     @{sid='S-1-5-21-444-555-666-1007';local='C:\Profiles\PlayerBeta\AppData\Local'})){
     $fixtureSid=$account.sid
-    $fixture=@{TaskXml=(Task-Xml $fixtureSid);Created=@();Protected=@()}
+    $fixture=@{TaskXml=(Task-Xml $fixtureSid);Created=@();Protected=@();WindowsBuild=26100;Is64Bit=$true}
     $startup=Get-StartupInstallation
     if($startup.Existing -or $startup.Original -ne $fixture.TaskXml -or $startup.Current -ne $fixture.TaskXml){throw 'Fresh install did not use the destination account startup task.'}
     $paths=Initialize-InstallerData $account.local
@@ -55,6 +64,16 @@ foreach($account in @(
         if(-not $path.StartsWith($account.local+'\',[StringComparison]::OrdinalIgnoreCase) -or $path -notin $fixture.Created -or $path -notin $fixture.Protected){throw 'Settings did not follow destination LocalAppData.'}
     }
     Assert-Compatibility
+    $fixture.WindowsBuild=20348
+    $refused=$false
+    try{Assert-Compatibility}catch{if($_.Exception.Message -ne 'This release requires Windows 11 x64.'){throw};$refused=$true}
+    if(-not $refused){throw 'Unsupported Windows build was accepted.'}
+    $fixture.WindowsBuild=26100
+    $fixture.Is64Bit=$false
+    $refused=$false
+    try{Assert-Compatibility}catch{if($_.Exception.Message -ne 'This release requires Windows 11 x64.'){throw};$refused=$true}
+    if(-not $refused){throw 'Unsupported OS architecture was accepted.'}
+    $fixture.Is64Bit=$true
     $fixture.TaskXml=Task-Xml 'S-1-5-21-999-888-777-1009'
     $refused=$false
     try{Get-StartupInstallation | Out-Null}catch{if($_.Exception.Message -ne 'Native startup belongs to a different Windows user.'){throw};$refused=$true}
@@ -64,4 +83,4 @@ foreach($account in @(
     try{Assert-Compatibility}catch{if($_.Exception.Message -notlike 'This ONEXConsole build is not supported*'){throw};$refused=$true}
     if(-not $refused){throw 'An incompatible vendor build was accepted.'}
 }
-Write-Output 'PASS: production fresh-install validation uses each destination account/task and LocalAppData path, accepts supported Intel OXP3 fixtures and rejects wrong-account tasks/incompatible vendor files. No installation performed.'
+Write-Output 'PASS: production fresh-install validation uses each destination account/task and LocalAppData path, accepts supported Intel OXP3 fixtures and rejects wrong-account tasks, unsupported Windows/architecture and incompatible vendor files. No installation performed.'
