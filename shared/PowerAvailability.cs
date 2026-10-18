@@ -6,7 +6,7 @@ namespace Oxp3.Controls
         {
             if (connected) return "";
             return restartRequired
-                ? "Restart Windows to enable power control."
+                ? "Restart ONEXConsole or Windows to reconnect power control."
                 : "Power control unavailable. Check that ONEXConsole is running.";
         }
     }

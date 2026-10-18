@@ -1,6 +1,6 @@
 # OXP3 Game Power
 
-Per-game TDP, brightness, and Night light in a controller-friendly Xbox Game Bar widget for the ONEXPLAYER 3.
+Per-game TDP, brightness, Night light, and Keep awake in a controller-friendly Xbox Game Bar widget for the ONEXPLAYER 3.
 
 We built this because ONEXConsole's TDP controls are awkward to use while playing, and the ONEXPLAYER 3's Xbox fullscreen experience lacks quick brightness and Night light controls.
 
@@ -16,7 +16,7 @@ This app is in alpha. If you run into trouble, [open an issue](https://github.co
 
 ## Update or remove
 
-To update, run **Setup.exe** and choose **Install / Repair**.
+Updates install automatically from GitHub when no game is detected and the widget is closed. You can also run **Setup.exe** and choose **Install / Repair**.
 
 To remove, choose **Remove** in Setup or uninstall **OXP3 Game Power** from Windows Installed apps. Uninstalling restores normal ONEXConsole startup. Saved wattages are retained for reinstall.
 

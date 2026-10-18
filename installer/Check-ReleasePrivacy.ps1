@@ -5,7 +5,11 @@ $privateValues = @($env:USERNAME, $env:COMPUTERNAME, [Security.Principal.Windows
     [Security.Principal.WindowsIdentity]::GetCurrent().User.Value) + $ForbiddenText
 $projectRoot = Split-Path $PSScriptRoot -Parent
 if (Get-Command git -ErrorAction SilentlyContinue) {
-    $privateValues += @(& git -C $projectRoot config user.name; & git -C $projectRoot config user.email)
+    # The explicitly public repository account is part of download URLs and
+    # commit metadata. Keep real machine/account identities forbidden.
+    $publicOwner = 'mirana21'
+    $gitIdentity = @(& git -C $projectRoot config user.name; & git -C $projectRoot config user.email)
+    $privateValues += @($gitIdentity | Where-Object { $_ -ne $publicOwner -and $_ -notmatch ('^\d+\+' + [regex]::Escape($publicOwner) + '@users\.noreply\.github\.com$') })
 }
 $privateValues = @($privateValues | Where-Object { $_ -and $_.Length -ge 4 } | Select-Object -Unique)
 if (-not ('Oxp3ReleasePrivacy' -as [type])) {
@@ -51,8 +55,7 @@ public static class Oxp3ReleasePrivacy {
         if (ProfilePath.IsMatch(content)) throw new Exception("Personal profile path in release: " + name);
         if (UserSid.IsMatch(content)) throw new Exception("Windows account SID in release: " + name);
         foreach (string value in forbidden) {
-            // A machine called "ONEX" must not reject the product name
-            // "ONEXConsole". Match account/host tokens, not word fragments.
+            // Match entire account/host tokens, not product-name fragments.
             if (content.IndexOf(value, StringComparison.OrdinalIgnoreCase) >= 0 &&
                 Regex.IsMatch(content, @"(?<![\p{L}\p{N}_])" + Regex.Escape(value) + @"(?![\p{L}\p{N}_])", RegexOptions.IgnoreCase))
                 throw new Exception("Build-machine identity in release: " + name);

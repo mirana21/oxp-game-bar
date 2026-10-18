@@ -1,7 +1,7 @@
 param([switch]$SkipWidgetBuild, [string]$NodePath, [string]$SignToolPath)
 $ErrorActionPreference='Stop'
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version='0.1.0.27'
+$version='0.1.0.30'
 $runtimeRoot=Join-Path $projectRoot ('artifacts\release-helper-' + [Guid]::NewGuid().ToString('N'))
 $buildReceipt=Join-Path $projectRoot ('artifacts\widget-build-' + [Guid]::NewGuid().ToString('N') + '.json')
 if (-not $SkipWidgetBuild) { & (Join-Path $projectRoot 'widget\Build-Widget.ps1') -SelfContained -HelperDirectory $runtimeRoot -BuildReceiptPath $buildReceipt }
@@ -13,7 +13,7 @@ Copy-Item -LiteralPath (Join-Path $projectRoot 'licenses\NightLight.txt') -Desti
 $packageRoot=Join-Path $projectRoot ('widget\packages\uwp-6.2.14\Oxp3PowerWidget_' + $version + '_x64_Test')
 Copy-Item -LiteralPath (Join-Path $packageRoot ('Oxp3PowerWidget_' + $version + '_x64.msix')) -Destination (Join-Path $destination 'Widget\OXP3.GamePower.msix')
 Get-ChildItem -LiteralPath (Join-Path $packageRoot 'Dependencies\x64') -Filter '*.appx' | Copy-Item -Destination (Join-Path $destination 'Widget\Dependencies')
-foreach($file in @('SetupEngine.ps1','Environment.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $destination ('Scripts\' + $file))}
+foreach($file in @('SetupEngine.ps1','Environment.ps1','Update.ps1','UpdateSupport.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $destination ('Scripts\' + $file))}
 $bridgeRoot=Join-Path $projectRoot 'native-bridge'
 $modules=Get-Content -LiteralPath (Join-Path $bridgeRoot 'startup-modules.json') -Raw|ConvertFrom-Json
 foreach($item in $modules.modules){
@@ -65,11 +65,11 @@ if (-not (Test-Path -LiteralPath $signTool)) { throw 'Windows SDK signing tool m
 & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Widget\OXP3.GamePower.msix')
 if($LASTEXITCODE -ne 0){throw 'Release package signing failed'}
 $readme=@'
-OXP3 Game Power — alpha 0.1.0.27
+OXP3 Game Power — alpha 0.1.0.30
 
-For Windows 11 x64, Intel ONEXPLAYER 3 and ONEXConsole 0.10.3-fix2.
+For Windows 11 x64, Intel ONEXPLAYER 3 and ONEXConsole.
 
-Per-game TDP, brightness, and Night light in a controller-friendly Game Bar widget.
+Per-game TDP, brightness, Night light, and Keep awake in a controller-friendly Game Bar widget.
 We built this because ONEXConsole's TDP controls are awkward to use while
 playing, and the ONEXPLAYER 3's Xbox fullscreen experience lacks quick
 brightness and Night light controls.
@@ -80,14 +80,15 @@ error message through the project's GitHub Issues page.
 Extract the ZIP, open Setup.exe, and choose Install / Repair.
 Open Xbox Game Bar → Widgets → OXP3 Game Power.
 
-To update, run Setup.exe and choose Install / Repair.
+Updates install automatically from GitHub when no game is detected and the widget is closed.
+You can also run Setup.exe and choose Install / Repair.
 To remove, choose Remove in Setup or uninstall OXP3 Game Power from Windows Installed apps.
 Uninstalling restores normal ONEXConsole startup.
 Saved wattages are retained for reinstall.
 '@
 [IO.File]::WriteAllText((Join-Path $destination 'Read me.txt'),$readme,[Text.UTF8Encoding]::new($false))
 $files=@(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object {@{path=$_.FullName.Substring($destination.Length+1);sha256=(Get-FileHash -LiteralPath $_.FullName).Hash.ToLowerInvariant()}})
-$release=@{formatVersion=1;version=$version;packageFamily='OXP3.PowerWidget_pv4gfha69c7qe';certificateThumbprint=$certificate.Thumbprint;nodeSha256=$modules.nodeSha256;files=$files;vendorFiles=@(@{path='C:\Program Files\OneXConsole\OneXConsole.exe';sha256='20610ea185f83d2b2acc709681125f0f4e1c9b1dcb2ce3881e9b43e8c067adc9'},@{path='C:\Program Files\OneXConsole\resources\app.asar';sha256='b232761f04bfffbc7bb77c664d661e1625186b1121c24bc4ba02e7c8b532d5b0'})}
+$release=@{formatVersion=1;version=$version;packageFamily='OXP3.PowerWidget_pv4gfha69c7qe';certificateThumbprint=$certificate.Thumbprint;nodeSha256=$modules.nodeSha256;updateRepository='mirana21/oxp-game-bar';allowPrereleaseUpdates=$true;updaterFormatVersion=1;files=$files}
 [IO.File]::WriteAllText((Join-Path $destination 'release.json'),($release|ConvertTo-Json -Depth 6),[Text.UTF8Encoding]::new($false))
 $manifestHash=(Get-FileHash -LiteralPath (Join-Path $destination 'release.json')).Hash.ToLowerInvariant()
 $source=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Setup.cs') -Raw).Replace('@@MANIFESTSHA@@',$manifestHash)

@@ -30,10 +30,12 @@ internal static class SetupProgram
         }
     }
     private static string Quote(string value) { return "\"" + value.Replace("\"", "\\\"") + "\""; }
-    internal static async Task<int> RunEngine(string mode, Action<string> log)
+    internal static async Task<int> RunEngine(string mode, Action<string> log, bool backgroundUpdate = false, bool rollback = false)
     {
         var info = new ProcessStartInfo(Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Windows), "System32", "WindowsPowerShell", "v1.0", "powershell.exe"));
         info.Arguments = "-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File " + Quote(Path.Combine(Root, "Scripts", "SetupEngine.ps1")) + " -Mode " + mode;
+        if (backgroundUpdate) info.Arguments += " -NoActivate -BackgroundUpdate";
+        if (rollback) info.Arguments += " -AllowDowngrade";
         info.UseShellExecute = false; info.CreateNoWindow = true;
         info.RedirectStandardOutput = true; info.RedirectStandardError = true;
         using (var process = new Process())
@@ -53,11 +55,13 @@ internal static class SetupProgram
             VerifyBundle();
             bool check = Array.IndexOf(args, "--check") >= 0;
             bool installTest = Array.IndexOf(args, "--install") >= 0;
+            bool update = Array.IndexOf(args, "--update") >= 0;
+            bool rollback = Array.IndexOf(args, "--rollback") >= 0;
             int length = 0;
             bool packaged = GetCurrentPackageFullName(ref length, IntPtr.Zero) != 15700;
             if (packaged)
             {
-                if (check || installTest) throw new Exception("Command-line setup must run outside the packaged launcher.");
+                if (check || installTest || update) throw new Exception("Command-line setup must run outside the packaged launcher.");
                 return RunEngine("Bootstrap", s => {}).GetAwaiter().GetResult();
             }
             int cleanup = Array.IndexOf(args, "--cleanup-task");
@@ -68,11 +72,11 @@ internal static class SetupProgram
                 info.UseShellExecute = false; info.CreateNoWindow = true;
                 using (var child = Process.Start(info)) child.WaitForExit();
             }
-            if (check || installTest)
+            if (check || installTest || update)
             {
                 var output = new StringBuilder();
-                int exit = RunEngine(installTest ? "Install" : "Check", s => { lock(output) output.AppendLine(s); }).GetAwaiter().GetResult();
-                File.WriteAllText(Path.Combine(Root, installTest ? "setup-install-result.txt" : "setup-check-result.txt"), output.ToString());
+                int exit = RunEngine(installTest || update ? "Install" : "Check", s => { lock(output) output.AppendLine(s); }, update, rollback).GetAwaiter().GetResult();
+                File.WriteAllText(Path.Combine(Root, update ? "setup-update-result.txt" : installTest ? "setup-install-result.txt" : "setup-check-result.txt"), output.ToString());
                 return exit;
             }
             Application.EnableVisualStyles(); Application.SetCompatibleTextRenderingDefault(false);
@@ -81,7 +85,7 @@ internal static class SetupProgram
         }
         catch (Exception error)
         {
-            if (Array.IndexOf(args, "--check") >= 0 || Array.IndexOf(args, "--install") >= 0) File.WriteAllText(Path.Combine(Root, Array.IndexOf(args, "--install") >= 0 ? "setup-install-result.txt" : "setup-check-result.txt"), error.Message);
+            if (Array.IndexOf(args, "--check") >= 0 || Array.IndexOf(args, "--install") >= 0 || Array.IndexOf(args, "--update") >= 0) File.WriteAllText(Path.Combine(Root, Array.IndexOf(args, "--update") >= 0 ? "setup-update-result.txt" : Array.IndexOf(args, "--install") >= 0 ? "setup-install-result.txt" : "setup-check-result.txt"), error.Message);
             else MessageBox.Show(error.Message, "OXP3 Game Power Setup", MessageBoxButtons.OK, MessageBoxIcon.Error);
             return 1;
         }
@@ -101,7 +105,7 @@ internal sealed class SetupWindow : Form
         var layout=new TableLayoutPanel { Dock=DockStyle.Fill, Padding=new Padding(20), ColumnCount=1, RowCount=5 };
         layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize)); layout.RowStyles.Add(new RowStyle(SizeType.Percent,100)); layout.RowStyles.Add(new RowStyle(SizeType.AutoSize));
         layout.Controls.Add(new Label { Text="OXP3 Game Power", Font=new Font("Segoe UI",18), AutoSize=true });
-        layout.Controls.Add(new Label { Text="Intel ONEXPLAYER 3 · ONEXConsole 0.10.3-fix2", AutoSize=true, Margin=new Padding(0,8,0,12) });
+        layout.Controls.Add(new Label { Text="Intel ONEXPLAYER 3 · ONEXConsole", AutoSize=true, Margin=new Padding(0,8,0,12) });
         layout.Controls.Add(status);
         output.Margin=new Padding(0,12,0,12); layout.Controls.Add(output);
         var actions=new FlowLayoutPanel { AutoSize=true, Dock=DockStyle.Fill }; actions.Controls.Add(install); actions.Controls.Add(remove); layout.Controls.Add(actions); Controls.Add(layout);

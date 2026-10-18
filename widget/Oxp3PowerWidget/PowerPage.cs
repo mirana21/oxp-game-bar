@@ -31,6 +31,9 @@ namespace Oxp3PowerWidget
         private readonly DispatcherTimer brightnessTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         private readonly Slider brightness = new Slider { Minimum = 0, Maximum = 100, StepFrequency = 1, Value = 50, IsEnabled = false };
         private readonly CheckBox nightLight = new CheckBox { Content = "Night light", IsEnabled = false };
+        private readonly CheckBox keepAwake = new CheckBox { Content = "Keep awake", IsEnabled = false };
+        private bool awakeAvailable, awakePolling, awakeWriting, awakeValue;
+        private long awakeRevision;
         private readonly TextBlock brightnessLabel = Label("Brightness", 16), brightnessValue = Label("—%", 18);
         private readonly Border brightnessCard = new Border { BorderBrush = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(2), CornerRadius = new CornerRadius(4), Padding = new Thickness(10, 6, 10, 6) };
         private readonly DispatcherTimer strengthTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
@@ -101,11 +104,12 @@ namespace Oxp3PowerWidget
             };
             strengthTimer.Tick += async (_, __) => await FlushStrengthAsync();
             nightLight.Click += async (_, __) => await SetNightLightAsync();
+            keepAwake.Click += async (_, __) => await SetKeepAwakeAsync();
             PreviewKeyDown += NavigateKey;
             timer.Tick += async (_, __) =>
             {
                 if (!loaded || !hostedWidget.Visible) { timer.Stop(); return; }
-                await RefreshDisplayAsync(); await RefreshStateAsync();
+                await RefreshDisplayAsync(); await RefreshAwakeAsync(); await RefreshStateAsync();
             };
             recoveryTimer.Tick += async (_, __) =>
             {
@@ -123,7 +127,7 @@ namespace Oxp3PowerWidget
                 await WriteHostStateAsync();
                 try { await App.StartHelperAsync(); }
                 catch (Exception exception) { await ReportAsync("Helper could not start.", exception); }
-                await RefreshDisplayAsync(); await RefreshStateAsync();
+                await RefreshDisplayAsync(); await RefreshAwakeAsync(); await RefreshStateAsync();
                 if (loaded && hostedWidget.Visible) { timer.Start(); entryHeader.Focus(FocusState.Programmatic); }
                 else if (loaded) recoveryTimer.Start();
                 await ResetCardSizeAsync();
@@ -148,7 +152,7 @@ namespace Oxp3PowerWidget
                             recoveryTimer.Stop();
                             if (loaded && hostedWidget.Visible)
                             {
-                                await RefreshDisplayAsync(); await RefreshStateAsync();
+                                await RefreshDisplayAsync(); await RefreshAwakeAsync(); await RefreshStateAsync();
                                 if (loaded && hostedWidget.Visible) { timer.Start(); entryHeader.Focus(FocusState.Programmatic); }
                             }
                             else if (!hostedWidget.Visible)
@@ -230,12 +234,16 @@ namespace Oxp3PowerWidget
             strength.LostFocus += (_, __) => strengthCard.BorderBrush = new SolidColorBrush(Colors.Transparent);
             strengthPanel.Children.Add(strength);
             strengthCard.Child = strengthPanel; mainPanel.Children.Add(strengthCard);
+            keepAwake.Style = (Style)Application.Current.Resources["PowerScopeSwitch"];
+            keepAwake.HorizontalAlignment = HorizontalAlignment.Stretch;
+            mainPanel.Children.Add(keepAwake);
             AutomationProperties.SetName(slider, "Wattage");
             AutomationProperties.SetName(brightness, "Brightness"); AutomationProperties.SetName(nightLight, "Night light");
             AutomationProperties.SetName(strength, "Night light strength");
+            AutomationProperties.SetName(keepAwake, "Keep awake");
             mainPanel.Children.Add(connection);
             root.Children.Add(mainPanel); Content = new ScrollViewer { Content = root, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-            entryHeader.TabIndex = 0; perGameSwitch.TabIndex = 1; slider.TabIndex = 2; brightness.TabIndex = 3; nightLight.TabIndex = 4; strength.TabIndex = 5;
+            entryHeader.TabIndex = 0; perGameSwitch.TabIndex = 1; slider.TabIndex = 2; brightness.TabIndex = 3; nightLight.TabIndex = 4; strength.TabIndex = 5; keepAwake.TabIndex = 6;
             ApplyDisplayMetrics();
         }
         private void ApplyDisplayMetrics()
@@ -246,13 +254,13 @@ namespace Oxp3PowerWidget
             powerLabel.FontSize = perGameSwitch.FontSize = compact ? 18 : 16;
             minimum.FontSize = maximum.FontSize = compact ? 14 : 12;
             connection.FontSize = compact ? 14 : 12;
-            brightnessLabel.FontSize = nightLight.FontSize = powerLabel.FontSize;
+            brightnessLabel.FontSize = nightLight.FontSize = keepAwake.FontSize = powerLabel.FontSize;
             brightnessValue.FontSize = targetWatts.FontSize;
             strengthLabel.FontSize = powerLabel.FontSize; strengthValue.FontSize = targetWatts.FontSize;
             header.Height = compact ? 40 : 36;
             gameIcon.Width = gameIcon.Height = iconFrame.Width = iconFrame.Height = compact ? 36 : 32;
             perGameSwitch.MinHeight = compact ? 52 : 48;
-            nightLight.MinHeight = perGameSwitch.MinHeight;
+            nightLight.MinHeight = keepAwake.MinHeight = perGameSwitch.MinHeight;
             mainPanel.Spacing = compact ? 12 : 10;
         }
         private void UpdateControls()
@@ -267,6 +275,7 @@ namespace Oxp3PowerWidget
             brightness.IsEnabled = loaded && brightnessAvailable;
             nightLight.IsEnabled = loaded && nightAvailable && !nightWriting;
             strength.IsEnabled = loaded && strengthAvailable && nightLight.IsChecked == true && !nightWriting;
+            keepAwake.IsEnabled = loaded && awakeAvailable && !awakeWriting;
         }
         private void Feedback(string text)
         {
@@ -285,7 +294,7 @@ namespace Oxp3PowerWidget
             bool select = key == VirtualKey.Enter || key == VirtualKey.Space || key == VirtualKey.GamepadA;
             if (!(left || right || up || down || select)) return;
             e.Handled = true;
-            Control[] candidates = new Control[] { perGameSwitch, slider, brightness, nightLight, strength };
+            Control[] candidates = new Control[] { perGameSwitch, slider, brightness, nightLight, strength, keepAwake };
             var controls = new System.Collections.Generic.List<Control>(); foreach (var c in candidates) if (c.IsEnabled) controls.Add(c);
             if (controls.Count == 0) return;
             int index = controls.IndexOf(FocusManager.GetFocusedElement() as Control);
@@ -297,7 +306,37 @@ namespace Oxp3PowerWidget
             {
                 if (focused == perGameSwitch) { perGameSwitch.IsChecked = perGameSwitch.IsChecked != true; await SetScopeAsync(); }
                 else if (focused == nightLight) { nightLight.IsChecked = nightLight.IsChecked != true; await SetNightLightAsync(); }
+                else if (focused == keepAwake) { keepAwake.IsChecked = keepAwake.IsChecked != true; await SetKeepAwakeAsync(); }
             }
+        }
+        private async Task RefreshAwakeAsync()
+        {
+            if (!loaded || awakePolling || awakeWriting) return;
+            long revision = awakeRevision;
+            awakePolling = true;
+            try
+            {
+                var state = await bridge.RequestAsync("getAwakeState");
+                if (revision != awakeRevision || awakeWriting) return;
+                awakeValue = state.GetNamedBoolean("keepAwake");
+                awakeAvailable = true; keepAwake.IsChecked = awakeValue;
+            }
+            catch (Exception exception) { if (revision == awakeRevision && !awakeWriting) awakeAvailable = false; await LogAsync(exception); }
+            finally { awakePolling = false; UpdateControls(); }
+        }
+        private async Task SetKeepAwakeAsync()
+        {
+            if (!keepAwake.IsEnabled) return;
+            bool desired = keepAwake.IsChecked == true;
+            awakeRevision++; awakeWriting = true; UpdateControls();
+            try
+            {
+                var state = await bridge.RequestAsync("setKeepAwake", request => request["enabled"] = JsonValue.CreateBooleanValue(desired));
+                if (state.GetNamedBoolean("keepAwake") != desired) throw new IOException("Windows did not confirm Keep awake.");
+                awakeValue = desired;
+            }
+            catch (Exception exception) { keepAwake.IsChecked = awakeValue; Feedback(exception.Message); await LogAsync(exception); }
+            finally { awakeWriting = false; await RefreshAwakeAsync(); if (keepAwake.IsEnabled) keepAwake.Focus(FocusState.Keyboard); }
         }
         private async Task RefreshDisplayAsync()
         {
@@ -535,7 +574,7 @@ namespace Oxp3PowerWidget
                 bool compact = hostedWidget.CompactModeEnabled;
                 // Apply bounds on every host creation. A one-time resize alone
                 // let Game Bar fall back to the old manifest width on restart.
-                hostedWidget.MinWindowSize = new Size(464, 450);
+                hostedWidget.MinWindowSize = new Size(464, 514);
                 hostedWidget.MaxWindowSize = new Size(compact ? 900 : 600, 640);
                 bool expanded = strengthCard.Visibility == Visibility.Visible;
                 string resizeKey = versionText + (compact ? ":compact" : ":desktop") + (expanded ? ":strength" : ":base");
@@ -543,7 +582,7 @@ namespace Oxp3PowerWidget
                 object previous;
                 if (settings.TryGetValue("cardResizeVersion", out previous) && String.Equals(previous as string, resizeKey, StringComparison.Ordinal)) return;
                 // One bounded migration per version, preserving later user resizing.
-                double width = Math.Max(464, Window.Current.Bounds.Width), height = expanded ? 550 : 450;
+                double width = Math.Max(464, Window.Current.Bounds.Width), height = expanded ? 614 : 514;
                 resizeState = new JsonObject
                 {
                     ["requestedWidth"] = JsonValue.CreateNumberValue(width),

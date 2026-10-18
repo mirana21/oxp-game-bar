@@ -23,9 +23,15 @@ foreach ($test in @('test-live-bridge.cjs', 'test-protocol.cjs')) {
     Assert-Exit $test
 }
 & (Join-Path $projectRoot 'native-bridge\test-startup-retry.ps1')
+& (Join-Path $projectRoot 'native-bridge\test-update-recovery.ps1')
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'native-bridge\test-update-recovery.ps1')
+Assert-Exit 'Windows PowerShell update recovery tests'
 & (Join-Path $projectRoot 'installer\Test-Removal.ps1')
 & (Join-Path $projectRoot 'installer\Test-ReleasePrivacy.ps1')
 & (Join-Path $projectRoot 'installer\Test-Portability.ps1')
+& (Join-Path $projectRoot 'installer\Test-Updater.ps1')
+& powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'installer\Test-Updater.ps1')
+Assert-Exit 'Windows PowerShell updater tests'
 & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'installer\Test-ReleasePrivacy.ps1')
 Assert-Exit 'Windows PowerShell release privacy tests'
 & powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -File (Join-Path $projectRoot 'installer\Test-Portability.ps1')
@@ -38,7 +44,7 @@ Assert-Exit 'Windows PowerShell Unicode discovery tests'
 foreach ($folder in @('installer','native-bridge','widget')) {
     foreach ($script in Get-ChildItem -LiteralPath (Join-Path $projectRoot $folder) -File -Filter '*.ps1') {
         # Only supported source paths, excluding local historical experiments.
-        if ($folder -eq 'native-bridge' -and $script.Name -notin @('startup-native.ps1','startup-task-common.ps1','test-startup-retry.ps1')) { continue }
+        if ($folder -eq 'native-bridge' -and $script.Name -notin @('startup-native.ps1','startup-task-common.ps1','test-startup-retry.ps1','recover-startup.ps1','test-update-recovery.ps1')) { continue }
         if ($script.Name -in @('Check-WidgetSource.ps1','Check-WidgetManifest.ps1')) { continue }
         $parseTokens = $null; $parseErrors = $null
         [void][Management.Automation.Language.Parser]::ParseFile($script.FullName, [ref]$parseTokens, [ref]$parseErrors)

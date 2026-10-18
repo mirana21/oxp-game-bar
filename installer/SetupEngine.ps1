@@ -1,4 +1,4 @@
-param([ValidateSet('Check','Install','Remove','Bootstrap')][string]$Mode = 'Check', [switch]$NoActivate)
+param([ValidateSet('Check','Install','Remove','Bootstrap')][string]$Mode = 'Check', [switch]$NoActivate, [switch]$BackgroundUpdate, [switch]$AllowDowngrade)
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $env:PSModulePath = Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\Modules'
@@ -7,6 +7,7 @@ $codeRoot = 'C:\Program Files\OXP3 Game Power Bridge'
 $setupRoot = 'C:\Program Files\OXP3 Game Power Setup'
 . (Join-Path $bundleRoot 'NativeBridge\startup-task-common.ps1')
 . (Join-Path $PSScriptRoot 'Environment.ps1')
+. (Join-Path $PSScriptRoot 'UpdateSupport.ps1')
 function Assert-Bundle {
     $release = Get-Content -LiteralPath (Join-Path $bundleRoot 'release.json') -Raw | ConvertFrom-Json
     if ($release.formatVersion -ne 1 -or $release.packageFamily -ne 'OXP3.PowerWidget_pv4gfha69c7qe') { throw 'Unexpected installation bundle.' }
@@ -34,29 +35,14 @@ function Copy-ProtectedBundle {
     }
 }
 function Get-StartupInstallation {
-    $receiptPath = Join-Path $codeRoot 'startup-receipt.json'
-    Assert-Oxp3AuthPath $receiptPath
-    if (-not (Test-Path -LiteralPath $receiptPath)) {
-        $original = Export-ScheduledTask -TaskName OneXConsole -TaskPath '\'
-        [void](Get-ReviewedStartupXml $original)
-        return @{ Existing = $false; Original = $original; Current = $original }
-    }
-    $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
-    $current = Export-ScheduledTask -TaskName OneXConsole -TaskPath '\'
-    if ($receipt.userSid -ne [Security.Principal.WindowsIdentity]::GetCurrent().User.Value -or $receipt.taskName -ne 'OneXConsole' -or $receipt.taskPath -ne '\' -or $receipt.formatVersion -ne 1 -or (Startup-TextHash $current) -ne $receipt.installedSha256) { throw 'ONEXConsole startup changed after installation; no task was overwritten.' }
-    $original = Get-Content -LiteralPath (Join-Path $codeRoot 'OneXConsole.original.xml') -Raw
-    if ((Startup-TextHash $original) -ne $receipt.originalSha256) { throw 'Startup backup verification failed.' }
-    [void](Get-ReviewedStartupXml $original)
-    return @{ Existing = $true; Original = $original; Current = $current; Receipt = $receipt }
+    Get-Oxp3StartupInstallation $codeRoot ([Security.Principal.WindowsIdentity]::GetCurrent().User.Value)
 }
 function Assert-Compatibility {
     if (-not [Environment]::Is64BitOperatingSystem -or [Environment]::OSVersion.Version.Build -lt 22000) { throw 'This release requires Windows 11 x64.' }
     $system = Get-CimInstance Win32_ComputerSystem
     $cpu = Get-CimInstance Win32_Processor | Select-Object -First 1
     if ($system.Model -ne 'ONEXPLAYER 3' -or $cpu.Manufacturer -ne 'GenuineIntel') { throw 'This release is tested for the Intel ONEXPLAYER 3 only.' }
-    foreach ($file in $release.vendorFiles) {
-        if (-not (Test-Path -LiteralPath $file.path) -or (Startup-Hash $file.path) -ne $file.sha256) { throw 'This ONEXConsole build is not supported. Its files were not changed.' }
-    }
+    if (-not (Test-Path -LiteralPath 'C:\Program Files\OneXConsole\resources\app.asar')) { throw 'ONEXConsole installation is incomplete or updating.' }
     $signature = Get-AuthenticodeSignature -LiteralPath 'C:\Program Files\OneXConsole\OneXConsole.exe'
     if ([int]$signature.Status -ne 0) { throw 'ONEXConsole signature verification failed.' }
     $node = Join-Path $bundleRoot 'Runtime\node.exe'
@@ -65,7 +51,7 @@ function Assert-Compatibility {
 }
 $release = Assert-Bundle
 $runtimeRoot = Join-Path $codeRoot ('Versions\' + $release.version)
-if ([version]$release.version -ne [version]'0.1.0.27') { throw 'Unexpected release version.' }
+if ([version]$release.version -ne [version]'0.1.0.30') { throw 'Unexpected release version.' }
 Assert-StartupAdmin
 if ($Mode -eq 'Bootstrap') {
     # A Task Scheduler action runs outside the launcher's MSIX identity. Stage
@@ -81,6 +67,11 @@ if ($Mode -eq 'Bootstrap') {
     exit 0
 }
 Assert-UnpackagedInstaller
+$maintenanceLock = [Threading.Mutex]::new($false, 'Local\OXP3.GamePower.StartupMaintenance')
+try { $lockOwned = $maintenanceLock.WaitOne(60000) } catch [Threading.AbandonedMutexException] { $lockOwned = $true }
+if (-not $lockOwned) { throw 'Another setup or connection repair is still running.' }
+try {
+if ($BackgroundUpdate -and (-not (Test-Path -LiteralPath (Join-Path $codeRoot 'startup-receipt.json')) -or -not (Test-Path -LiteralPath 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OXP3GamePower'))) { throw 'The app was removed; automatic installation was cancelled.' }
 if ($Mode -eq 'Remove') {
     $startup = Get-StartupInstallation
     $local = [Environment]::GetFolderPath([Environment+SpecialFolder]::LocalApplicationData)
@@ -98,6 +89,8 @@ if ($Mode -eq 'Remove') {
         Register-ScheduledTask -TaskName OneXConsole -TaskPath '\' -Xml $startup.Original -Force | Out-Null
         Move-Item -LiteralPath (Join-Path $codeRoot 'startup-receipt.json') -Destination (Join-Path $codeRoot 'startup-receipt.json.restored') -Force
     }
+    if (Get-ScheduledTask -TaskName OXP3GamePowerRecovery -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName OXP3GamePowerRecovery -Confirm:$false }
+    if (Get-ScheduledTask -TaskName OXP3GamePowerUpdate -ErrorAction SilentlyContinue) { Unregister-ScheduledTask -TaskName OXP3GamePowerUpdate -Confirm:$false }
     Get-AppxPackage -Name OXP3.PowerWidget | Remove-AppxPackage
     $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OXP3GamePower'
     if (Test-Path -LiteralPath $uninstallKey) { Remove-Item -LiteralPath $uninstallKey }
@@ -152,8 +145,11 @@ foreach ($dependency in Get-ChildItem -LiteralPath (Join-Path $bundleRoot 'Widge
     $identity = $xml.Package.Identity
     if (-not @(Get-AppxPackage -Name $identity.Name | Where-Object { $_.Publisher -eq $identity.Publisher -and [version]$_.Version -ge [version]$identity.Version -and $_.Architecture.ToString() -in @('X64','Neutral') }).Count) { $needed += $dependency.FullName }
 }
-if ($needed.Count) { Add-AppxPackage -Path $package -DependencyPath $needed -ForceTargetApplicationShutdown }
-else { Add-AppxPackage -Path $package -ForceTargetApplicationShutdown }
+$wasHelperRunning = @(Get-Process -Name OXP3.PowerWidget.Helper -ErrorAction SilentlyContinue).Count -gt 0
+$packageArguments = @{ Path = $package; ForceTargetApplicationShutdown = $true }
+if ($needed.Count) { $packageArguments.DependencyPath = $needed }
+if ($AllowDowngrade) { $packageArguments.ForceUpdateFromAnyVersion = $true }
+Add-AppxPackage @packageArguments
 $installed = @(Get-AppxPackage -Name OXP3.PowerWidget)
 if ($installed.Count -ne 1 -or $installed[0].PackageFamilyName -ne $release.packageFamily -or [version]$installed[0].Version -ne [version]$release.version -or $installed[0].Status.ToString() -ne 'Ok') { throw 'Widget registration verification failed.' }
 Write-Output 'Preparing saved settings...'
@@ -178,23 +174,8 @@ foreach ($item in $modules.modules) {
 foreach ($file in @('startup-modules.json')) { Copy-Item -LiteralPath (Join-Path $bundleRoot ('NativeBridge\' + $file)) -Destination (Join-Path $runtimeRoot $file) -Force; Protect-StartupCode (Join-Path $runtimeRoot $file) $false }
 if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot 'node.exe')) -or (Startup-Hash (Join-Path $runtimeRoot 'node.exe')) -ne $release.nodeSha256) { Copy-Item -LiteralPath (Join-Path $bundleRoot 'Runtime\node.exe') -Destination (Join-Path $runtimeRoot 'node.exe') -Force }
 Protect-StartupCode (Join-Path $runtimeRoot 'node.exe') $false
-if (-not $startup.Existing) {
-    [IO.File]::WriteAllText((Join-Path $codeRoot 'OneXConsole.original.xml'), $startup.Original, [Text.UTF8Encoding]::new($false))
-    Protect-StartupCode (Join-Path $codeRoot 'OneXConsole.original.xml') $false
-}
-$review = Get-ReviewedStartupXml $startup.Original
-$review.Action.SelectSingleNode('t:Arguments',$review.Manager).InnerText = '"' + (Join-Path $runtimeRoot 'startup-native.vbs') + '"'
-$settings = $review.Xml.SelectSingleNode('/t:Task/t:Settings', $review.Manager)
-foreach ($setting in @(@('ExecutionTimeLimit','PT0S'),@('AllowHardTerminate','false'))) {
-    $element = $settings.SelectSingleNode('t:' + $setting[0],$review.Manager)
-    if (-not $element) { $element = $review.Xml.CreateElement($setting[0], 'http://schemas.microsoft.com/windows/2004/02/mit/task'); [void]$settings.AppendChild($element) }
-    $element.InnerText = $setting[1]
-}
-if ((Startup-TextHash (Export-ScheduledTask -TaskName OneXConsole -TaskPath '\')) -ne (Startup-TextHash $startup.Current)) { throw 'Startup changed during setup; registration was refused.' }
-if (-not $startup.Existing -or $startup.Receipt.runtimeRoot -ine $runtimeRoot) { Register-ScheduledTask -TaskName OneXConsole -TaskPath '\' -Xml $review.Xml.OuterXml -Force | Out-Null }
-$receipt = @{ formatVersion = 1; runtimeRoot = $runtimeRoot; taskName = 'OneXConsole'; taskPath = '\'; userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; originalSha256 = Startup-TextHash $startup.Original; installedSha256 = Startup-TextHash (Export-ScheduledTask -TaskName OneXConsole -TaskPath '\'); installedAt = [DateTime]::UtcNow.ToString('o') }
-[IO.File]::WriteAllText((Join-Path $codeRoot 'startup-receipt.json'), ($receipt | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
-Protect-StartupCode (Join-Path $codeRoot 'startup-receipt.json') $false
+Set-Oxp3StartupInstallation $startup $codeRoot $runtimeRoot
+Register-Oxp3RecoveryTask $runtimeRoot
 $pendingPower = Join-Path $paths.MirrorRoot 'pending-power-startup.json'
 Assert-Oxp3AuthPath $pendingPower
 $nativeInstances = @(Get-CimInstance Win32_Process -Filter "Name='OneXConsole.exe'" | Where-Object { $_.CreationDate -is [DateTime] })
@@ -209,6 +190,7 @@ if ($nativeRunning -and $protectedParents.Count -eq 0) {
     Remove-Item -LiteralPath $pendingPower
 }
 Copy-ProtectedBundle
+Register-Oxp3UpdateTask $setupRoot
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OXP3GamePower'
 New-Item -Path $uninstallKey -Force | Out-Null
 foreach ($pair in @(@('DisplayName','OXP3 Game Power'),@('DisplayVersion',$release.version),@('Publisher','OXP3Personal'),@('InstallLocation',$setupRoot),@('UninstallString',('"' + (Join-Path $setupRoot 'Setup.exe') + '" --remove')))) { New-ItemProperty -LiteralPath $uninstallKey -Name $pair[0] -Value $pair[1] -PropertyType String -Force | Out-Null }
@@ -224,5 +206,9 @@ elseif (-not $NoActivate -and $protectedParents.Count -gt 0) {
     # restarting it. The helper supports the older bridge during this session.
     Start-Process -FilePath 'ms-gamebar:activate/OXP3.PowerWidget_pv4gfha69c7qe_App_PowerProfiles' -WindowStyle Hidden
 }
-if ($nativeRunning -and $protectedParents.Count -eq 0) { Write-Output 'Installed. Restart Windows to enable power control.' }
+elseif ($BackgroundUpdate -and $wasHelperRunning) {
+    Start-Process -FilePath 'ms-gamebar:activate/OXP3.PowerWidget_pv4gfha69c7qe_App_PowerProfiles' -WindowStyle Hidden
+}
+if ($nativeRunning -and $protectedParents.Count -eq 0) { Write-Output 'Installed. Restart ONEXConsole or Windows to enable power control.' }
 else { Write-Output 'Installed. Open Xbox Game Bar and select OXP3 Game Power from Widgets.' }
+} finally { $maintenanceLock.ReleaseMutex(); $maintenanceLock.Dispose() }

@@ -13,10 +13,10 @@ $fixture = @{}
 function Get-StartupInstallation { @{ Existing = $fixture.Existing; Current = '<bridge/>'; Original = '<vendor/>' } }
 function Export-ScheduledTask { param($TaskName, $TaskPath) if ($fixture.Changed) { '<changed/>' } else { '<bridge/>' } }
 function Get-Process { throw 'Removal must not depend on or operate on running processes.' }
-function Get-ScheduledTask { @{ State = 4 } }
+function Get-ScheduledTask { param($TaskName,$ErrorAction) @{ State = 4 } }
 function Stop-Process { throw 'Removal must not stop processes.' }
 function Stop-ScheduledTask { throw 'Removal must not stop tasks.' }
-function Unregister-ScheduledTask { throw 'Removal must update the existing task.' }
+function Unregister-ScheduledTask { param($TaskName,$Confirm) if ($TaskName -eq 'OXP3GamePowerRecovery') { $fixture.RecoveryRemoved = $true } elseif ($TaskName -eq 'OXP3GamePowerUpdate') { $fixture.UpdaterRemoved = $true } else { throw 'Removal must update the existing vendor task.' } }
 function Register-ScheduledTask {
     param($TaskName, $TaskPath, $Xml, [switch]$Force)
     if ($TaskName -ne 'OneXConsole' -or $TaskPath -ne '\' -or $Xml -ne '<vendor/>' -or -not $Force) { throw 'Incorrect startup restoration.' }
@@ -42,7 +42,7 @@ function Remove-Item {
 foreach ($existing in @($true, $false)) {
     $fixture = @{ Existing = $existing; Changed = $false }
     & $body | Out-Null
-    if (-not $fixture.BackedUp -or -not $fixture.PackageRemoved -or -not $fixture.EntryRemoved -or [bool]$fixture.Restored -ne $existing -or [bool]$fixture.ReceiptMoved -ne $existing) { throw 'Removal did not complete correctly.' }
+    if (-not $fixture.BackedUp -or -not $fixture.PackageRemoved -or -not $fixture.EntryRemoved -or -not $fixture.RecoveryRemoved -or -not $fixture.UpdaterRemoved -or [bool]$fixture.Restored -ne $existing -or [bool]$fixture.ReceiptMoved -ne $existing) { throw 'Removal did not complete correctly.' }
 }
 $fixture = @{ Existing = $true; Changed = $true }
 $refused = $false

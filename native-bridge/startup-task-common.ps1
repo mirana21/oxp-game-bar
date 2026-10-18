@@ -109,3 +109,75 @@ function Get-ReviewedStartupXml([string]$Text) {
     if ($taskSid -ne $currentSid) { throw 'Native startup belongs to a different Windows user.' }
     return @{ Xml = $xml; Manager = $manager; Action = $actions[0] }
 }
+
+function Get-Oxp3StartupInstallation([string]$CodeRoot, [string]$UserSid) {
+    $current = Export-ScheduledTask -TaskName OneXConsole -TaskPath '\'
+    $receiptPath = Join-Path $CodeRoot 'startup-receipt.json'
+    Assert-Oxp3AuthPath $receiptPath
+    if (-not (Test-Path -LiteralPath $receiptPath)) {
+        [void](Get-ReviewedStartupXml $current)
+        return @{ Existing = $false; Original = $current; Current = $current; VendorReset = $false }
+    }
+    $receipt = Get-Content -LiteralPath $receiptPath -Raw | ConvertFrom-Json
+    if ($receipt.userSid -ne $UserSid -or $receipt.taskName -ne 'OneXConsole' -or $receipt.taskPath -ne '\' -or $receipt.formatVersion -ne 1) { throw 'Startup receipt does not belong to this installation.' }
+    $original = Get-Content -LiteralPath (Join-Path $CodeRoot 'OneXConsole.original.xml') -Raw
+    if ((Startup-TextHash $original) -ne $receipt.originalSha256) { throw 'Startup backup verification failed.' }
+    [void](Get-ReviewedStartupXml $original)
+    $reset = (Startup-TextHash $current) -ne $receipt.installedSha256
+    if ($reset) {
+        # Updaters recreate the vendor task. Accept only its known executable,
+        # arguments and signed-in account; preserve all updated task settings.
+        [void](Get-ReviewedStartupXml $current)
+        $original = $current
+    }
+    return @{ Existing = $true; Original = $original; Current = $current; Receipt = $receipt; VendorReset = $reset }
+}
+
+function Set-Oxp3StartupInstallation($Startup, [string]$CodeRoot, [string]$RuntimeRoot) {
+    $review = Get-ReviewedStartupXml $Startup.Original
+    $review.Action.SelectSingleNode('t:Arguments',$review.Manager).InnerText = '"' + (Join-Path $RuntimeRoot 'startup-native.vbs') + '"'
+    $settings = $review.Xml.SelectSingleNode('/t:Task/t:Settings', $review.Manager)
+    if (-not $settings) {
+        $settings = $review.Xml.CreateElement('Settings', 'http://schemas.microsoft.com/windows/2004/02/mit/task')
+        [void]$review.Xml.DocumentElement.AppendChild($settings)
+    }
+    foreach ($setting in @(@('ExecutionTimeLimit','PT0S'),@('AllowHardTerminate','false'))) {
+        $element = $settings.SelectSingleNode('t:' + $setting[0],$review.Manager)
+        if (-not $element) { $element = $review.Xml.CreateElement($setting[0], 'http://schemas.microsoft.com/windows/2004/02/mit/task'); [void]$settings.AppendChild($element) }
+        $element.InnerText = $setting[1]
+    }
+    if ((Startup-TextHash (Export-ScheduledTask -TaskName OneXConsole -TaskPath '\')) -ne (Startup-TextHash $Startup.Current)) { throw 'Startup changed during repair; registration was refused.' }
+    if (-not $Startup.Existing -or $Startup.VendorReset) {
+        [IO.File]::WriteAllText((Join-Path $CodeRoot 'OneXConsole.original.xml'), $Startup.Original, [Text.UTF8Encoding]::new($false))
+        Protect-StartupCode (Join-Path $CodeRoot 'OneXConsole.original.xml') $false
+    }
+    if (-not $Startup.Existing -or $Startup.VendorReset -or $Startup.Receipt.runtimeRoot -ine $RuntimeRoot) {
+        Register-ScheduledTask -TaskName OneXConsole -TaskPath '\' -Xml $review.Xml.OuterXml -Force | Out-Null
+    }
+    $receipt = @{ formatVersion = 1; runtimeRoot = $RuntimeRoot; taskName = 'OneXConsole'; taskPath = '\'; userSid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value; originalSha256 = Startup-TextHash $Startup.Original; installedSha256 = Startup-TextHash (Export-ScheduledTask -TaskName OneXConsole -TaskPath '\'); installedAt = [DateTime]::UtcNow.ToString('o') }
+    [IO.File]::WriteAllText((Join-Path $CodeRoot 'startup-receipt.json'), ($receipt | ConvertTo-Json), [Text.UTF8Encoding]::new($false))
+    Protect-StartupCode (Join-Path $CodeRoot 'startup-receipt.json') $false
+}
+
+function Register-Oxp3RecoveryTask([string]$RuntimeRoot) {
+    # This task survives vendor task replacement. It runs only at sign-in,
+    # on vendor task registration/update, or on a disconnected helper request.
+    # There is no resident watchdog or periodic process/timer.
+    $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $RuntimeRoot 'recover-startup.ps1') + '"')
+    $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
+    $trigger.Delay = 'PT2S'
+    $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Highest
+    $settings = New-ScheduledTaskSettingsSet -AllowStartIfOnBatteries -DontStopIfGoingOnBatteries -MultipleInstances IgnoreNew -ExecutionTimeLimit ([TimeSpan]::FromMinutes(2))
+    [xml]$xml = (New-ScheduledTask -Action $action -Trigger $trigger -Principal $principal -Settings $settings | Export-ScheduledTask)
+    $ns = 'http://schemas.microsoft.com/windows/2004/02/mit/task'
+    $manager = [Xml.XmlNamespaceManager]::new($xml.NameTable); $manager.AddNamespace('t',$ns)
+    $event = $xml.CreateElement('EventTrigger',$ns)
+    foreach ($pair in @(@('Enabled','true'),@('Subscription','<QueryList><Query Id="0" Path="Microsoft-Windows-TaskScheduler/Operational"><Select Path="Microsoft-Windows-TaskScheduler/Operational">*[System[(EventID=106 or EventID=140)]] and *[EventData[Data[@Name="TaskName"]="\OneXConsole"]]</Select></Query></QueryList>'),@('Delay','PT2S'))) {
+        $node = $xml.CreateElement($pair[0],$ns); $node.InnerText = $pair[1]; [void]$event.AppendChild($node)
+    }
+    [void]$xml.SelectSingleNode('/t:Task/t:Triggers',$manager).AppendChild($event)
+    $log = [Diagnostics.Eventing.Reader.EventLogConfiguration]::new('Microsoft-Windows-TaskScheduler/Operational')
+    try { if (-not $log.IsEnabled) { $log.IsEnabled = $true; $log.SaveChanges() } } finally { $log.Dispose() }
+    Register-ScheduledTask -TaskName OXP3GamePowerRecovery -Xml $xml.OuterXml -Force | Out-Null
+}

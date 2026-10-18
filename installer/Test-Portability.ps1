@@ -1,5 +1,6 @@
 $ErrorActionPreference = 'Stop'
 . (Join-Path $PSScriptRoot 'Environment.ps1')
+. (Join-Path $PSScriptRoot '..\native-bridge\startup-task-common.ps1')
 # Run production startup validation with only the Windows identity adapter
 # replaced. Synthetic accounts need not exist on the test machine.
 $tokens=$null; $errors=$null
@@ -47,7 +48,7 @@ function Startup-Hash {
     foreach($file in $release.vendorFiles){if($file.path -eq $ItemPath){return $file.sha256}}
     throw 'Unexpected file hash'
 }
-function Get-AuthenticodeSignature { param($LiteralPath) @{Status=0} }
+function Get-AuthenticodeSignature { param($LiteralPath) @{Status=$(if ($fixture.BadVendor -and $LiteralPath.EndsWith('OneXConsole.exe')) { 1 } else { 0 })} }
 function Get-AppxPackage { param($Name) if($Name -ne 'Microsoft.XboxGamingOverlay'){throw 'Wrong package query'}; @{Name=$Name} }
 function Task-Xml([string]$sid) {
     '<Task xmlns="http://schemas.microsoft.com/windows/2004/02/mit/task"><Principals><Principal><UserId>'+ $sid +'</UserId><RunLevel>HighestAvailable</RunLevel></Principal></Principals><Actions><Exec><Command>wscript.exe</Command><Arguments>"C:\Program Files\OneXConsole\resources\resources\tools\OneXConsoleStartup.vbs"</Arguments></Exec></Actions></Task>'
@@ -80,7 +81,7 @@ foreach($account in @(
     if(-not $refused){throw 'A different account startup task was accepted.'}
     $fixture.BadVendor=$true
     $refused=$false
-    try{Assert-Compatibility}catch{if($_.Exception.Message -notlike 'This ONEXConsole build is not supported*'){throw};$refused=$true}
-    if(-not $refused){throw 'An incompatible vendor build was accepted.'}
+    try{Assert-Compatibility}catch{if($_.Exception.Message -ne 'ONEXConsole signature verification failed.'){throw};$refused=$true}
+    if(-not $refused){throw 'An invalid vendor signature was accepted.'}
 }
 Write-Output 'PASS: production fresh-install validation uses each destination account/task and LocalAppData path, accepts supported Intel OXP3 fixtures and rejects wrong-account tasks, unsupported Windows/architecture and incompatible vendor files. No installation performed.'

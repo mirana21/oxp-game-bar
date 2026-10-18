@@ -3,15 +3,11 @@
 // It never changes vendor files and never changes wattage on launch.
 const fs = require('fs');
 const path = require('path');
-const crypto = require('crypto');
 const { spawn, execFileSync } = require('child_process');
 const { CdpPipe } = require('./cdp-pipe.cjs');
 const EXE_PATH = 'C:/Program Files/OneXConsole/OneXConsole.exe';
 const ASAR_PATH = 'C:/Program Files/OneXConsole/resources/app.asar';
-const EXE_SHA256 = '20610ea185f83d2b2acc709681125f0f4e1c9b1dcb2ce3881e9b43e8c067adc9';
-const ASAR_SHA256 = 'b232761f04bfffbc7bb77c664d661e1625186b1121c24bc4ba02e7c8b532d5b0';
 const wait = (milliseconds) => new Promise((resolve) => setTimeout(resolve, milliseconds));
-function hashFile(file) { return crypto.createHash('sha256').update(fs.readFileSync(file)).digest('hex'); }
 function powershell(script) {
   // A Node process started by PowerShell 7 inherits its module search path.
   // Windows PowerShell must load its own Security module, and all failures
@@ -26,7 +22,7 @@ function powershell(script) {
 }
 function verifyVendor() {
   if (process.platform !== 'win32') throw new Error('This launcher requires Windows.');
-  if (hashFile(EXE_PATH) !== EXE_SHA256 || hashFile(ASAR_PATH) !== ASAR_SHA256) throw new Error('Unreviewed ONEXConsole executable/archive. Native launch refused.');
+  if (!fs.existsSync(EXE_PATH) || !fs.existsSync(ASAR_PATH)) throw new Error('ONEXConsole installation is incomplete or updating.');
   const status = powershell("$s = Get-AuthenticodeSignature -LiteralPath 'C:/Program Files/OneXConsole/OneXConsole.exe'; if($null -eq $s){throw 'Signature result missing'}; [int]$s.Status");
   if (status !== '0') throw new Error('The original vendor signature is not valid. Native launch refused.');
   const admin = powershell("$i=[Security.Principal.WindowsIdentity]::GetCurrent(); $p=[Security.Principal.WindowsPrincipal]::new($i); $p.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)");
@@ -50,17 +46,38 @@ function startEnabledHelper() {
     'requested'
   `);
 }
+async function attachRenderer(modulePath) {
+  let load = window.__oxp3LiveModuleLoader;
+  if (!load) {
+    const id = 'oxp3-live-capture-' + Date.now();
+    if (Array.isArray(window.webpackJsonp)) {
+      window.webpackJsonp.push([[id], { [id]: function(module, exports, require) {
+        window.__oxp3LiveModuleLoader = require;
+      } }, [[id]]]);
+    } else {
+      const chunks = Object.keys(window).filter(key => /^webpackChunk/.test(key) && Array.isArray(window[key]));
+      if (chunks.length !== 1) throw new Error('Native renderer module loader is unavailable');
+      window[chunks[0]].push([[id], {}, require => { window.__oxp3LiveModuleLoader = require; }]);
+    }
+    load = window.__oxp3LiveModuleLoader;
+  }
+  if (typeof load !== 'function') throw new Error('Native renderer module loader is unavailable');
+  const matches = value => value && typeof value.require === 'function' && typeof value.getCurrentWindow === 'function';
+  let remote = Object.values(load.c || {}).map(module => module.exports).find(matches);
+  if (!remote) {
+    // Module IDs change between builds. Inspect factories without executing
+    // unrelated app modules, then verify the remote module's actual interface.
+    const candidates = Object.entries(load.m || {}).filter(([, factory]) =>
+      typeof factory === 'function' && /@electron\/remote/.test(Function.prototype.toString.call(factory)));
+    for (const [key] of candidates) {
+      try { const value = load(key); if (matches(value)) { remote = value; break; } } catch { }
+    }
+  }
+  if (!remote) throw new Error('This ONEXConsole update no longer exposes the required remote interface');
+  return await remote.require(modulePath).startLive(remote.getCurrentWindow().id);
+}
 function bootstrapExpression(modulePath) {
-  return `(async()=>{
-    if (!Array.isArray(window.webpackJsonp)) throw new Error('Native renderer module loader is unavailable');
-    window.webpackJsonp.push([['oxp3-live-bootstrap-v1'],{
-      'oxp3-live-capture-v1':function(module,exports,load){window.__oxp3LiveModuleLoader=load;}
-    },[['oxp3-live-capture-v1']]]);
-    const remote=window.__oxp3LiveModuleLoader('191f');
-    if (!remote || typeof remote.require!=='function') throw new Error('Native remote module is unavailable');
-    const bridge=remote.require(${JSON.stringify(modulePath)});
-    return await bridge.startLive(remote.getCurrentWindow().id);
-  })()`;
+  return `(${attachRenderer.toString()})(${JSON.stringify(modulePath)})`;
 }
 async function evaluate(transport, sessionId, expression) {
   const result = await transport.request('Runtime.evaluate', { expression, awaitPromise: true, returnByValue: true }, sessionId);
@@ -141,7 +158,7 @@ async function main() {
   log('native-launched', { pid: native.pid, transport: 'private-inherited-pipes', vendorFilesChanged: false });
   try {
     const version = await transport.request('Browser.getVersion');
-    if (!version || !/Electron\/30\.5\.1\b/.test(version.userAgent || '')) throw new Error('Unreviewed native Electron runtime.');
+    if (!version || !/Electron\/\d+\./.test(version.userAgent || '')) throw new Error('The native Electron debugging interface is unavailable.');
     const state = await recoverBridge({ connect: () => bootstrap(transport, modulePath),
       isAlive: () => !transport.closed && native.exitCode === null && native.signalCode === null, log });
     if (!state) return;
@@ -157,4 +174,4 @@ async function main() {
   // Child stdio retains the event loop and private handles until native Exit.
 }
 if (require.main === module) main().catch((error) => { console.error(error.message); process.exitCode = 20; });
-module.exports = { bootstrapExpression, bootstrap, recoverBridge, evaluate, verifyVendor, startEnabledHelper, EXE_PATH, ASAR_PATH, EXE_SHA256, ASAR_SHA256 };
+module.exports = { attachRenderer, bootstrapExpression, bootstrap, recoverBridge, evaluate, verifyVendor, startEnabledHelper, EXE_PATH, ASAR_PATH };

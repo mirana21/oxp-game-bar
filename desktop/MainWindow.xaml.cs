@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer strengthTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DeferredSlider brightnessEdit = new(), strengthEdit = new();
     private bool brightnessAvailable, nightAvailable, strengthAvailable, displayRefreshing, displayUpdating, nightWriting;
+    private bool awakeAvailable, awakeRefreshing, awakeWriting, awakeValue;
+    private long awakeRevision;
     private long nightRevision, powerRevision;
     private DateTimeOffset powerDue;
     private bool refreshing, writing, connected, updating, perGame, closing;
@@ -47,20 +49,20 @@ public partial class MainWindow : Window
                 try { Process.Start(new ProcessStartInfo("ms-gamebar:activate/OXP3.PowerWidget_pv4gfha69c7qe_App_PowerProfiles") { UseShellExecute = true }); }
                 catch (Exception error) { Feedback("Could not start the helper: " + error.Message); }
             }
-            await RefreshDisplay(); await Refresh(); timer.Start(); inputTimer.Start(); GameHeader.Focus();
+            await RefreshDisplay(); await RefreshAwake(); await Refresh(); timer.Start(); inputTimer.Start(); GameHeader.Focus();
         };
         Closed += (_, _) => { timer.Stop(); inputTimer.Stop(); writeTimer.Stop(); brightnessTimer.Stop(); strengthTimer.Stop(); };
         Closing += async (_, e) =>
         {
-            if (pending == null && !writing && !brightnessEdit.Busy && !strengthEdit.Busy && !nightWriting) return;
+            if (pending == null && !writing && !brightnessEdit.Busy && !strengthEdit.Busy && !nightWriting && !awakeWriting) return;
             e.Cancel = true; closing = true; UpdateControls();
             while (writing || pending != null) { if (!writing) await FlushChanges(true); else await Task.Delay(50); }
-            while (brightnessEdit.Busy || strengthEdit.Busy || nightWriting) { await FlushBrightness(true); await FlushStrength(true); await Task.Delay(50); }
+            while (brightnessEdit.Busy || strengthEdit.Busy || nightWriting || awakeWriting) { await FlushBrightness(true); await FlushStrength(true); await Task.Delay(50); }
             Close();
         };
         Deactivated += async (_, _) => { controller.Reset(); await FlushBrightness(true); await FlushStrength(true); await FlushChanges(true); };
         Activated += (_, _) => GameHeader.Focus();
-        timer.Tick += async (_, _) => { await RefreshDisplay(); await Refresh(); };
+        timer.Tick += async (_, _) => { await RefreshDisplay(); await RefreshAwake(); await Refresh(); };
         brightnessTimer.Tick += async (_, _) => await FlushBrightness();
         strengthTimer.Tick += async (_, _) => await FlushStrength();
         writeTimer.Tick += async (_, _) => await FlushChanges();
@@ -98,6 +100,7 @@ public partial class MainWindow : Window
         Brightness.IsEnabled = brightnessAvailable && !closing;
         NightLight.IsEnabled = nightAvailable && !nightWriting && !closing;
         Strength.IsEnabled = strengthAvailable && NightLight.IsChecked == true && !nightWriting && !closing;
+        KeepAwake.IsEnabled = awakeAvailable && !awakeWriting && !closing;
     }
     private async Task RefreshDisplay()
     {
@@ -117,7 +120,7 @@ public partial class MainWindow : Window
             if (strengthAvailable) Strength.Value = value.GetInt32();
             StrengthValue.Text = strengthAvailable ? $"{Math.Round(Strength.Value)}%" : "—%";
             bool showStrength = NightLight.IsChecked == true;
-            if ((StrengthCard.Visibility == Visibility.Visible) != showStrength) { StrengthCard.Visibility = showStrength ? Visibility.Visible : Visibility.Collapsed; Height = showStrength ? 590 : 480; }
+            if ((StrengthCard.Visibility == Visibility.Visible) != showStrength) { StrengthCard.Visibility = showStrength ? Visibility.Visible : Visibility.Collapsed; Height = showStrength ? 654 : 544; }
         }
         catch (Exception error) { if (brightnessEdit.AcceptRead(brightnessRead) && strengthEdit.AcceptRead(strengthRead) && nightRead == nightRevision) { brightnessAvailable = nightAvailable = strengthAvailable = false; Feedback(error.Message); } }
         finally { displayUpdating = displayRefreshing = false; UpdateControls(); }
@@ -175,6 +178,33 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { Feedback(error.Message); }
         finally { nightWriting = false; await RefreshDisplay(); NightLight.Focus(); }
+    }
+    private async Task RefreshAwake()
+    {
+        if (closing || awakeRefreshing || awakeWriting) return;
+        long revision = awakeRevision; awakeRefreshing = true;
+        try
+        {
+            var state = await Request(new { command = "getAwakeState" });
+            if (awakeWriting || revision != awakeRevision) return;
+            awakeValue = state.GetProperty("keepAwake").GetBoolean();
+            awakeAvailable = true; KeepAwake.IsChecked = awakeValue;
+        }
+        catch (Exception) { if (!awakeWriting && revision == awakeRevision) awakeAvailable = false; }
+        finally { awakeRefreshing = false; UpdateControls(); }
+    }
+    private async void KeepAwakeChanged(object sender, RoutedEventArgs e)
+    {
+        if (!KeepAwake.IsEnabled) return;
+        bool desired = KeepAwake.IsChecked == true; awakeRevision++; awakeWriting = true; UpdateControls();
+        try
+        {
+            var state = await Request(new { command = "setKeepAwake", enabled = desired });
+            if (state.GetProperty("keepAwake").GetBoolean() != desired) throw new IOException("Windows did not confirm Keep awake.");
+            awakeValue = desired;
+        }
+        catch (Exception error) { KeepAwake.IsChecked = awakeValue; Feedback(error.Message); }
+        finally { awakeWriting = false; await RefreshAwake(); if (KeepAwake.IsEnabled) KeepAwake.Focus(); }
     }
     private void Feedback(string message)
     {
@@ -289,7 +319,7 @@ public partial class MainWindow : Window
         if (closing) return;
         if (action == InputAction.Settings) return;
         if (action == InputAction.Back) { Watts.Focus(); return; }
-        Control[] controls = [PerGame, Watts, Brightness, NightLight, Strength];
+        Control[] controls = [PerGame, Watts, Brightness, NightLight, Strength, KeepAwake];
         controls = controls.Where(c => c.IsEnabled).ToArray();
         if (controls.Length == 0) return;
         int index = Array.FindIndex(controls, c => c.IsKeyboardFocusWithin);
@@ -304,6 +334,7 @@ public partial class MainWindow : Window
         {
             if (controls[index] == PerGame) { PerGame.IsChecked = PerGame.IsChecked != true; ScopeChanged(PerGame, new RoutedEventArgs()); }
             else if (controls[index] == NightLight) { NightLight.IsChecked = NightLight.IsChecked != true; NightLightChanged(NightLight, new RoutedEventArgs()); }
+            else if (controls[index] == KeepAwake) { KeepAwake.IsChecked = KeepAwake.IsChecked != true; KeepAwakeChanged(KeepAwake, new RoutedEventArgs()); }
         }
     }
 }

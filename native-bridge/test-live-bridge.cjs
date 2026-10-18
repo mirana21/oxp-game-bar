@@ -138,6 +138,29 @@ async function main() {
   input.destroy(); output.destroy();
 
   new vm.Script(bootstrapExpression('C:/profile/native-bridge/live-native-bridge.cjs'));
+  // Simulate a future rebuild with different module IDs and Webpack 4/5.
+  // No unrelated module factory may execute during capability discovery.
+  for (const generation of [4, 5]) {
+    let unrelatedLoads = 0, starts = 0;
+    const remote = { require: file => {
+      assert.equal(file, 'bridge.cjs'); return { startLive: async id => { assert.equal(id, 42); starts++; return { nativeConnected: true }; } };
+    }, getCurrentWindow: () => ({ id: 42 }) };
+    const load = id => { if (id !== 'new-id-after-update') { unrelatedLoads++; throw new Error('Unrelated module'); } return remote; };
+    load.c = {};
+    load.m = { unrelated: function() { throw new Error('Do not load'); }, 'new-id-after-update': function() { return '@electron/remote'; } };
+    const window = generation === 4 ? { webpackJsonp: { } } : {};
+    if (generation === 4) {
+      window.webpackJsonp = [];
+      window.webpackJsonp.push = packet => Object.values(packet[1])[0]({}, {}, load);
+    } else {
+      window.webpackChunkRenamedApp = [];
+      window.webpackChunkRenamedApp.push = packet => packet[2](load);
+    }
+    const result = await vm.runInNewContext(bootstrapExpression('bridge.cjs'), { window });
+    assert.equal(result.nativeConnected, true); assert.equal(starts, 1); assert.equal(unrelatedLoads, 0);
+    load.m = { unrelated: function() { throw new Error('Do not load'); } };
+    await assert.rejects(vm.runInNewContext(bootstrapExpression('bridge.cjs'), { window }), /required remote interface/);
+  }
   for (const file of ['launch-native.cjs', 'cdp-pipe.cjs', 'live-native-bridge.cjs']) {
     new vm.Script(fs.readFileSync(path.join(__dirname, file), 'utf8'), { filename: file });
   }

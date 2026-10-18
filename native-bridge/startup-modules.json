@@ -4,7 +4,7 @@
   "modules": [
     {
       "file": "launch-native.cjs",
-      "sha256": "c0073a11099c8da2defb30b2ea4d92f0eae71ea529b62aa1844aba9cda79552b"
+      "sha256": "b6d560f2e1ee615dea145ae4d335d3095ae593d795225eb96d840dac233052cd"
     },
     {
       "file": "cdp-pipe.cjs",
@@ -12,7 +12,7 @@
     },
     {
       "file": "live-native-bridge.cjs",
-      "sha256": "99bf0e03a7ca917afc4d67ed6ef0c8c6d8ed55c96b1190f6cdad63426a67a42f"
+      "sha256": "a176cf47c4ce8e8fde9579d0246cefa9ac74ecea389ba45511f12155c1e7c772"
     },
     {
       "file": "oxp3-power-bridge.cjs",
@@ -36,7 +36,11 @@
     },
     {
       "file": "startup-task-common.ps1",
-      "sha256": "a266d129768ce90377e677252fd08bfc24f1b013a169497b5fb7171946ef0b1c"
+      "sha256": "d553811d2fff4147d48d93809699785fecc195b6a1873dbdfd62a1b5ff356319"
+    },
+    {
+      "file": "recover-startup.ps1",
+      "sha256": "56997dacf5783035e80f3ee7643ab232e7d907d593332a96273ff4ec1508decf"
     }
   ]
 }

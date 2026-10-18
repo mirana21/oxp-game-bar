@@ -22,7 +22,15 @@ internal sealed class NativePower : INativePower
     private readonly string legacyTokenPath;
     private readonly string pipeName;
     public NativePower(string directory, string pipeName = "OXP3.OneXConsole.Power.v1") { legacyTokenPath = Path.Combine(directory, "bridge-token.txt"); this.pipeName = pipeName; }
-    public Task<NativeState> Read(CancellationToken token) => Request("getState", null, token);
+    public async Task<NativeState> Read(CancellationToken token)
+    {
+        try { return await Request("getState", null, token); }
+        catch (Exception) when (!token.IsCancellationRequested)
+        {
+            if (pipeName == "OXP3.OneXConsole.Power.v1" && Native.PackageFamilyName != null) StartupRecovery.Request();
+            throw;
+        }
+    }
     public Task<NativeState> Apply(int watts, CancellationToken token) => Request("setWatts", watts, token);
     private async Task<NativeState> Request(string command, int? watts, CancellationToken cancellation, string? legacyToken = null)
     {
@@ -56,9 +64,10 @@ internal sealed class NativePower : INativePower
     }
 }
 
-internal sealed class Controller
+internal sealed class Controller : IDisposable
 {
     private readonly DisplayControl display = new();
+    private readonly AwakeControl awake;
     private static readonly JsonSerializerOptions JsonOptions = new() { PropertyNameCaseInsensitive = true, WriteIndented = true };
     private readonly INativePower native;
     private readonly PendingPowerActivation powerActivation;
@@ -100,9 +109,10 @@ internal sealed class Controller
         return iconPng;
     }
 
-    public Controller(INativePower native, string directory, PendingPowerActivation? powerActivation = null)
+    public Controller(INativePower native, string directory, PendingPowerActivation? powerActivation = null, AwakeControl? awake = null)
     {
         this.native = native;
+        this.awake = awake ?? new AwakeControl();
         this.powerActivation = powerActivation ?? new PendingPowerActivation(directory);
         Directory.CreateDirectory(directory);
         file = Path.Combine(directory, "remembered-watts.json");
@@ -111,6 +121,7 @@ internal sealed class Controller
             : new Preferences(false, new List<SavedGame>());
         ValidatePreferences(preferences);
     }
+    public void Dispose() => awake.Dispose();
 
     private static void ValidatePreferences(Preferences p)
     {
@@ -163,6 +174,7 @@ internal sealed class Controller
     {
         var displayCommand = request.GetProperty("command").GetString();
         if (displayCommand == "ping") return new { alive = true };
+        if (displayCommand is "getAwakeState" or "setKeepAwake") return awake.Command(request);
         if (displayCommand is "getDisplayState" or "setBrightness" or "setNightLight" or "setNightLightStrength") return await display.Command(request, token);
         await gate.WaitAsync(token);
         try
@@ -187,7 +199,7 @@ internal sealed class Controller
                     lastPlayingId = playing?.Id;
                     var usePerGame = playing != null && preferences.Enabled && preferences.Games.Any(g => g.Id == playing.Id && SamePath(g.ExePath, playing.ExePath) && g.UsePerGame);
                     var restartRequired = !connected && powerActivation.NeedsRestart();
-                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = "0.1.0.27", helperPackage = Native.PackageFamilyName ?? "" };
+                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = "0.1.0.30", helperPackage = Native.PackageFamilyName ?? "" };
                 }
                 case "setScope":
                 case "adjustWatts":
@@ -443,7 +455,7 @@ internal static class Program
         Directory.CreateDirectory(directory);
         using var mutex = new Mutex(true, "Local\\OXP3.PowerWidget.Helper", out var created);
         if (!created) return;
-        var controller = new Controller(new NativePower(Native.SharedDataDirectory), directory);
+        using var controller = new Controller(new NativePower(Native.SharedDataDirectory), directory);
         using var cancellation = new CancellationTokenSource();
         var root = AppContext.BaseDirectory;
         var module = Path.Combine(root, "GameDiscovery.psm1");
@@ -760,6 +772,8 @@ internal static class SelfTest
         var exe = Path.Combine(root, "game.exe"); File.WriteAllBytes(exe, Array.Empty<byte>());
         var native = new FakeNative(); var controller = new Controller(native, root); var token = CancellationToken.None;
         await KeylessNativeTest(root);
+        AwakeControlTests.Run();
+        await AwakeControlTests.RoutingTest(Path.Combine(root, "awake"));
         await NativeTimeoutTest(root);
         await PowerAvailabilityTests(Path.Combine(root, "activation"));
         await UnicodeDiscoveryTest(Path.Combine(root, "unicode"));
@@ -869,7 +883,7 @@ internal static class SelfTest
         var controller = new Controller(native, root, activation);
         var state = JsonSerializer.SerializeToElement(await controller.Command(Request(new { command = "getState" }), CancellationToken.None));
         Assert(!state.GetProperty("connected").GetBoolean() && state.GetProperty("restartRequired").GetBoolean(), "A pending activation must never report power available.");
-        Assert(state.GetProperty("powerMessage").GetString() == "Restart Windows to enable power control.", "Unavailable power must explain the required restart.");
+        Assert(state.GetProperty("powerMessage").GetString() == "Restart ONEXConsole or Windows to reconnect power control.", "Unavailable power must explain the required restart.");
         bool rejected = false;
         try { await controller.Command(Request(new { command = "adjustWatts", scope = "global", gameId = "", exePath = "", watts = 16 }), CancellationToken.None); }
         catch (InvalidOperationException) { rejected = true; }

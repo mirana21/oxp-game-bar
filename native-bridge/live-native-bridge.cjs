@@ -4,7 +4,6 @@
 const path = require('path');
 const net = require('net');
 const { attachConnection, PIPE_NAME } = require('./oxp3-power-bridge.cjs');
-const EXPECTED_VERSION = '0.10.3-fix2';
 const MAX_PENDING = 8;
 
 function readQuickState() {
@@ -123,7 +122,8 @@ function createLiveController({ ipcMain, readTarget, readLimits, refreshUi, onBa
 async function startLive(quickWindowId) {
   if (global.__oxp3LivePowerBridge) return global.__oxp3LivePowerBridge.status();
   const { app, BrowserWindow, ipcMain, powerMonitor } = require('electron');
-  if (app.getVersion() !== EXPECTED_VERSION) throw new Error('Unreviewed ONEXConsole version.');
+  if (typeof ipcMain.listeners !== 'function' || typeof powerMonitor.isOnBatteryPower !== 'function')
+    throw new Error('This ONEXConsole update changed the native power interface.');
   if (!Number.isInteger(quickWindowId)) throw new Error('Invalid native quick-settings window.');
   const quickWindow = BrowserWindow.fromId(quickWindowId);
   if (!quickWindow || !/#\/quicksetting(?:[/?]|$)/.test(quickWindow.webContents.getURL())) throw new Error('Expected native quick-settings renderer.');
