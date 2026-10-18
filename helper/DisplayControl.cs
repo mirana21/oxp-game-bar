@@ -4,11 +4,12 @@ using Microsoft.Win32;
 
 namespace OXP3.PowerWidget.Helper;
 
-internal sealed record DisplayState(bool BrightnessAvailable, int? Brightness, bool NightLightAvailable, bool? NightLight, int? NightLightStrength);
+internal sealed record DisplayState(bool BrightnessAvailable, int? Brightness, bool NightLightAvailable, bool? NightLight, int? NightLightStrength, bool HdrAvailable, bool? Hdr);
 
 internal sealed class DisplayControl
 {
     private readonly SemaphoreSlim gate = new(1);
+    private readonly HdrControl hdr = new();
     private DisplayState? cached;
     private DateTime refreshed;
     internal async Task<object> Command(JsonElement request, CancellationToken token)
@@ -35,16 +36,22 @@ internal sealed class DisplayControl
                 NightLightCodec.SetStrength(request.GetProperty("strength").GetInt32());
                 cached = null;
             }
+            else if (command == "setHdr")
+            {
+                await Task.Run(() => hdr.Set(request.GetProperty("enabled").GetBoolean()), token);
+                cached = null;
+            }
             if (cached == null || DateTime.UtcNow - refreshed >= TimeSpan.FromSeconds(2))
             {
                 int? brightness = null, strength = null; bool? night = null;
                 try { brightness = await Task.Run(ReadBrightness, token); } catch (Exception) { }
                 try { var state = NightLightCodec.Read(); if (state.Usable) night = state.Active; } catch (Exception) { }
                 try { strength = NightLightCodec.ReadStrength(); } catch (Exception) { }
-                cached = new(brightness.HasValue, brightness, night.HasValue, night, strength);
+                var hdrState = hdr.Read();
+                cached = new(brightness.HasValue, brightness, night.HasValue, night, strength, hdrState.Available, hdrState.Enabled);
                 refreshed = DateTime.UtcNow;
             }
-            return new { brightnessAvailable = cached.BrightnessAvailable, brightness = cached.Brightness, nightLightAvailable = cached.NightLightAvailable, nightLight = cached.NightLight, nightLightStrength = cached.NightLightStrength };
+            return new { brightnessAvailable = cached.BrightnessAvailable, brightness = cached.Brightness, nightLightAvailable = cached.NightLightAvailable, nightLight = cached.NightLight, nightLightStrength = cached.NightLightStrength, hdrAvailable = cached.HdrAvailable, hdr = cached.Hdr };
         }
         finally { gate.Release(); }
     }
@@ -83,7 +90,8 @@ internal sealed class DisplayControl
 // Windows 11 CloudStore/Bond CompactBinary v1. Schema informed by
 // Kevin Xiao's MIT-licensed win-nightlight-lib (see licenses/NightLight.txt).
 // Preserve unmodelled fields byte-for-byte; only state, manual-transition time,
-// and envelope timestamp change. Strength edits change only colour temperature.
+// and envelope timestamp change. Strength edits preserve schedule settings and
+// refresh activation only when Night light is already on.
 internal static class NightLightCodec
 {
     internal const string RegistryPath = @"Software\Microsoft\Windows\CurrentVersion\CloudStore\Store\DefaultAccount\Current\default$windows.data.bluelightreduction.bluelightreductionstate\windows.data.bluelightreduction.bluelightreductionstate";
@@ -99,11 +107,44 @@ internal static class NightLightCodec
         if (strength < 0 || strength > 100) throw new ArgumentException("Night light strength must be between 0 and 100%.");
         using var key = Registry.CurrentUser.OpenSubKey(SettingsPath, true) ?? throw new IOException("Night light strength is unavailable.");
         var data = key.GetValue("Data") as byte[] ?? throw new IOException("Night light strength is unavailable.");
-        if (DecodeStrength(data) == strength) return;
+        if (DecodeStrength(data) == strength) { RefreshActiveStrength(); return; }
         var updated = ChangeStrength(data, strength, DateTime.UtcNow);
         if (key.GetValue("Data") is not byte[] latest || !latest.SequenceEqual(data)) throw new IOException("Night light settings changed in Windows. Try again.");
         key.SetValue("Data", updated, RegistryValueKind.Binary);
         if (ReadStrength() != strength) throw new IOException("Windows did not confirm Night light strength.");
+        RefreshActiveStrength();
+    }
+    private static void RefreshActiveStrength()
+    {
+        var data = RegistryData();
+        var state = Decode(data);
+        if (!state.Usable || !state.Active) return;
+        // The display service caches temperature while active. A timestamp
+        // notification alone does not reload its transform on this Windows
+        // build. Briefly refresh activation, preserving the transition source,
+        // manual timestamp, unknown fields and all schedule settings.
+        var off = StrengthActivation(data, false, DateTime.UtcNow);
+        using var key = Registry.CurrentUser.OpenSubKey(RegistryPath, true) ?? throw new IOException("Night light is unavailable.");
+        if (key.GetValue("Data") is not byte[] latest || !latest.SequenceEqual(data)) throw new IOException("Night light changed in Windows. Try again.");
+        key.SetValue("Data", off, RegistryValueKind.Binary);
+        Thread.Sleep(350); // Allow the display service to observe deactivation.
+        latest = key.GetValue("Data") as byte[] ?? throw new IOException("Night light is unavailable.");
+        if (!Encode(Unwrap(latest).Payload).SequenceEqual(Encode(Unwrap(off).Payload)))
+        {
+            // A native/scheduled transition wins over our temporary refresh.
+            if (Decode(latest).Active) return;
+            throw new IOException("Night light changed in Windows. Try again.");
+        }
+        var on = StrengthActivation(latest, true, DateTime.UtcNow);
+        key.SetValue("Data", on, RegistryValueKind.Binary);
+        if (!Read().Active) throw new IOException("Windows did not confirm Night light.");
+    }
+    internal static byte[] StrengthActivation(byte[] data, bool enabled, DateTime utc)
+    {
+        var (outer, container, wrapper, payload) = Unwrap(data);
+        if (enabled) { if (!payload.Any(f => f.Id == 0)) payload.Add(new(0, 16, [0])); }
+        else payload.RemoveAll(f => f.Id == 0);
+        return Rewrap(outer, container, wrapper, payload, utc);
     }
     internal static void Set(bool enabled)
     {
@@ -250,6 +291,10 @@ internal static class NightLightCodec
     {
         var on = Convert.FromHexString("434201000A0201002A068995FCBE062A2B0E15434201001000D00A02C614A9F6E2D3EFEAE6ED0100000000");
         if (!Decode(on).Active) throw new Exception("Night light active fixture failed.");
+        var refreshOff = StrengthActivation(on, false, DateTime.UtcNow);
+        var refreshed = StrengthActivation(refreshOff, true, DateTime.UtcNow);
+        if (Decode(refreshOff).Active || !Decode(refreshed).Active) throw new Exception("Active Night light strength refresh failed.");
+        if (!Encode(Unwrap(on).Payload).SequenceEqual(Encode(Unwrap(refreshed).Payload))) throw new Exception("Strength refresh changed Night light's state/source/timestamp fields.");
         var off = Change(on, false, DateTime.UtcNow);
         if (Decode(off).Active || !Decode(Change(off, true, DateTime.UtcNow)).Active) throw new Exception("Night light transitions failed.");
         var withUnknown = Unwrap(on); withUnknown.Payload.Add(new(40, 9, [3, 97, 98, 99]));

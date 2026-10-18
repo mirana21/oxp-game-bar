@@ -23,6 +23,8 @@ public partial class MainWindow : Window
     private readonly DispatcherTimer strengthTimer = new() { Interval = TimeSpan.FromSeconds(1) };
     private readonly DeferredSlider brightnessEdit = new(), strengthEdit = new();
     private bool brightnessAvailable, nightAvailable, strengthAvailable, displayRefreshing, displayUpdating, nightWriting;
+    private bool hdrAvailable, hdrWriting, hdrValue;
+    private long hdrRevision;
     private bool awakeAvailable, awakeRefreshing, awakeWriting, awakeValue;
     private long awakeRevision;
     private long nightRevision, powerRevision;
@@ -54,10 +56,10 @@ public partial class MainWindow : Window
         Closed += (_, _) => { timer.Stop(); inputTimer.Stop(); writeTimer.Stop(); brightnessTimer.Stop(); strengthTimer.Stop(); };
         Closing += async (_, e) =>
         {
-            if (pending == null && !writing && !brightnessEdit.Busy && !strengthEdit.Busy && !nightWriting && !awakeWriting) return;
+            if (pending == null && !writing && !brightnessEdit.Busy && !strengthEdit.Busy && !nightWriting && !hdrWriting && !awakeWriting) return;
             e.Cancel = true; closing = true; UpdateControls();
             while (writing || pending != null) { if (!writing) await FlushChanges(true); else await Task.Delay(50); }
-            while (brightnessEdit.Busy || strengthEdit.Busy || nightWriting || awakeWriting) { await FlushBrightness(true); await FlushStrength(true); await Task.Delay(50); }
+            while (brightnessEdit.Busy || strengthEdit.Busy || nightWriting || hdrWriting || awakeWriting) { await FlushBrightness(true); await FlushStrength(true); await Task.Delay(50); }
             Close();
         };
         Deactivated += async (_, _) => { controller.Reset(); await FlushBrightness(true); await FlushStrength(true); await FlushChanges(true); };
@@ -98,21 +100,26 @@ public partial class MainWindow : Window
         if (!connected) TargetWatts.Text = powerStateRead ? "Unavailable" : "— W";
         PerGame.IsEnabled = connected && gameId.Length > 0 && !writing && pending == null && !closing;
         Brightness.IsEnabled = brightnessAvailable && !closing;
+        Hdr.IsEnabled = hdrAvailable && !hdrWriting && !closing;
+        Hdr.Content = hdrAvailable ? "HDR" : "HDR unavailable";
         NightLight.IsEnabled = nightAvailable && !nightWriting && !closing;
         Strength.IsEnabled = strengthAvailable && NightLight.IsChecked == true && !nightWriting && !closing;
         KeepAwake.IsEnabled = awakeAvailable && !awakeWriting && !closing;
     }
     private async Task RefreshDisplay()
     {
-        if (displayRefreshing || brightnessEdit.Busy || strengthEdit.Busy || nightWriting || closing) return;
-        long brightnessRead = brightnessEdit.Revision, strengthRead = strengthEdit.Revision, nightRead = nightRevision;
+        if (displayRefreshing || brightnessEdit.Busy || strengthEdit.Busy || nightWriting || hdrWriting || closing) return;
+        long brightnessRead = brightnessEdit.Revision, strengthRead = strengthEdit.Revision, nightRead = nightRevision, hdrRead = hdrRevision;
         displayRefreshing = true;
         try
         {
             var state = await Request(new { command = "getDisplayState" });
-            if (!brightnessEdit.AcceptRead(brightnessRead) || !strengthEdit.AcceptRead(strengthRead) || nightWriting || nightRead != nightRevision) return;
+            if (!brightnessEdit.AcceptRead(brightnessRead) || !strengthEdit.AcceptRead(strengthRead) || nightWriting || nightRead != nightRevision || hdrWriting || hdrRead != hdrRevision) return;
             brightnessAvailable = state.GetProperty("brightnessAvailable").GetBoolean(); nightAvailable = state.GetProperty("nightLightAvailable").GetBoolean();
             displayUpdating = true;
+            hdrAvailable = state.TryGetProperty("hdrAvailable", out var hdrAvailableState) && hdrAvailableState.GetBoolean();
+            hdrValue = state.TryGetProperty("hdr", out var hdrState) && hdrState.ValueKind == JsonValueKind.True;
+            Hdr.IsChecked = hdrValue;
             if (brightnessAvailable) Brightness.Value = state.GetProperty("brightness").GetInt32();
             BrightnessValue.Text = brightnessAvailable ? $"{Math.Round(Brightness.Value)}%" : "—%";
             NightLight.IsChecked = nightAvailable && state.GetProperty("nightLight").GetBoolean();
@@ -120,9 +127,9 @@ public partial class MainWindow : Window
             if (strengthAvailable) Strength.Value = value.GetInt32();
             StrengthValue.Text = strengthAvailable ? $"{Math.Round(Strength.Value)}%" : "—%";
             bool showStrength = NightLight.IsChecked == true;
-            if ((StrengthCard.Visibility == Visibility.Visible) != showStrength) { StrengthCard.Visibility = showStrength ? Visibility.Visible : Visibility.Collapsed; Height = showStrength ? 654 : 544; }
+            if ((StrengthCard.Visibility == Visibility.Visible) != showStrength) { StrengthCard.Visibility = showStrength ? Visibility.Visible : Visibility.Collapsed; Height = showStrength ? 718 : 608; }
         }
-        catch (Exception error) { if (brightnessEdit.AcceptRead(brightnessRead) && strengthEdit.AcceptRead(strengthRead) && nightRead == nightRevision) { brightnessAvailable = nightAvailable = strengthAvailable = false; Feedback(error.Message); } }
+        catch (Exception error) { if (brightnessEdit.AcceptRead(brightnessRead) && strengthEdit.AcceptRead(strengthRead) && nightRead == nightRevision && hdrRead == hdrRevision) { brightnessAvailable = nightAvailable = strengthAvailable = hdrAvailable = false; Feedback(error.Message); } }
         finally { displayUpdating = displayRefreshing = false; UpdateControls(); }
     }
     private void BrightnessChanged(object sender, RoutedPropertyChangedEventArgs<double> e)
@@ -166,6 +173,19 @@ public partial class MainWindow : Window
         }
         catch (Exception error) { Feedback(error.Message); }
         finally { strengthEdit.Complete(); ScheduleDisplayWrite(strengthTimer, strengthEdit); if (!strengthEdit.Busy) await RefreshDisplay(); }
+    }
+    private async void HdrChanged(object sender, RoutedEventArgs e)
+    {
+        if (displayUpdating || !Hdr.IsEnabled) return;
+        bool desired = Hdr.IsChecked == true; hdrRevision++; hdrWriting = true; UpdateControls();
+        try
+        {
+            var state = await Request(new { command = "setHdr", enabled = desired });
+            if (state.GetProperty("hdr").GetBoolean() != desired) throw new IOException("Windows did not confirm HDR.");
+            hdrValue = desired;
+        }
+        catch (Exception error) { Hdr.IsChecked = hdrValue; Feedback(error.Message); }
+        finally { hdrWriting = false; await RefreshDisplay(); if (Hdr.IsEnabled) Hdr.Focus(); }
     }
     private async void NightLightChanged(object sender, RoutedEventArgs e)
     {
@@ -319,7 +339,7 @@ public partial class MainWindow : Window
         if (closing) return;
         if (action == InputAction.Settings) return;
         if (action == InputAction.Back) { Watts.Focus(); return; }
-        Control[] controls = [PerGame, Watts, Brightness, NightLight, Strength, KeepAwake];
+        Control[] controls = [PerGame, Watts, Brightness, Hdr, NightLight, Strength, KeepAwake];
         controls = controls.Where(c => c.IsEnabled).ToArray();
         if (controls.Length == 0) return;
         int index = Array.FindIndex(controls, c => c.IsKeyboardFocusWithin);
@@ -333,6 +353,7 @@ public partial class MainWindow : Window
         if (action == InputAction.Select)
         {
             if (controls[index] == PerGame) { PerGame.IsChecked = PerGame.IsChecked != true; ScopeChanged(PerGame, new RoutedEventArgs()); }
+            else if (controls[index] == Hdr) { Hdr.IsChecked = Hdr.IsChecked != true; HdrChanged(Hdr, new RoutedEventArgs()); }
             else if (controls[index] == NightLight) { NightLight.IsChecked = NightLight.IsChecked != true; NightLightChanged(NightLight, new RoutedEventArgs()); }
             else if (controls[index] == KeepAwake) { KeepAwake.IsChecked = KeepAwake.IsChecked != true; KeepAwakeChanged(KeepAwake, new RoutedEventArgs()); }
         }

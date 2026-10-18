@@ -30,6 +30,9 @@ namespace Oxp3PowerWidget
         private readonly DispatcherTimer writeTimer = new DispatcherTimer { Interval = TimeSpan.FromSeconds(1) };
         private readonly DispatcherTimer brightnessTimer = new DispatcherTimer { Interval = TimeSpan.FromMilliseconds(150) };
         private readonly Slider brightness = new Slider { Minimum = 0, Maximum = 100, StepFrequency = 1, Value = 50, IsEnabled = false };
+        private readonly CheckBox hdr = new CheckBox { Content = "HDR", IsEnabled = false };
+        private bool hdrAvailable, hdrWriting, hdrValue;
+        private long hdrRevision;
         private readonly CheckBox nightLight = new CheckBox { Content = "Night light", IsEnabled = false };
         private readonly CheckBox keepAwake = new CheckBox { Content = "Keep awake", IsEnabled = false };
         private bool awakeAvailable, awakePolling, awakeWriting, awakeValue;
@@ -103,6 +106,7 @@ namespace Oxp3PowerWidget
                 strengthEdit.Queue((int)Math.Round(strength.Value), DateTimeOffset.UtcNow); ScheduleDisplayWrite(strengthTimer, strengthEdit);
             };
             strengthTimer.Tick += async (_, __) => await FlushStrengthAsync();
+            hdr.Click += async (_, __) => await SetHdrAsync();
             nightLight.Click += async (_, __) => await SetNightLightAsync();
             keepAwake.Click += async (_, __) => await SetKeepAwakeAsync();
             PreviewKeyDown += NavigateKey;
@@ -220,6 +224,8 @@ namespace Oxp3PowerWidget
             brightness.LostFocus += (_, __) => brightnessCard.BorderBrush = new SolidColorBrush(Colors.Transparent);
             displayPanel.Children.Add(brightness);
             brightnessCard.Child = displayPanel; mainPanel.Children.Add(brightnessCard);
+            hdr.Style = (Style)Application.Current.Resources["PowerScopeSwitch"]; hdr.HorizontalAlignment = HorizontalAlignment.Stretch;
+            mainPanel.Children.Add(hdr);
             nightLight.Style = (Style)Application.Current.Resources["PowerScopeSwitch"]; nightLight.HorizontalAlignment = HorizontalAlignment.Stretch;
             mainPanel.Children.Add(nightLight);
             var strengthPanel = new StackPanel();
@@ -239,11 +245,12 @@ namespace Oxp3PowerWidget
             mainPanel.Children.Add(keepAwake);
             AutomationProperties.SetName(slider, "Wattage");
             AutomationProperties.SetName(brightness, "Brightness"); AutomationProperties.SetName(nightLight, "Night light");
+            AutomationProperties.SetName(hdr, "HDR");
             AutomationProperties.SetName(strength, "Night light strength");
             AutomationProperties.SetName(keepAwake, "Keep awake");
             mainPanel.Children.Add(connection);
             root.Children.Add(mainPanel); Content = new ScrollViewer { Content = root, VerticalScrollBarVisibility = ScrollBarVisibility.Auto, HorizontalScrollBarVisibility = ScrollBarVisibility.Disabled };
-            entryHeader.TabIndex = 0; perGameSwitch.TabIndex = 1; slider.TabIndex = 2; brightness.TabIndex = 3; nightLight.TabIndex = 4; strength.TabIndex = 5; keepAwake.TabIndex = 6;
+            entryHeader.TabIndex = 0; perGameSwitch.TabIndex = 1; slider.TabIndex = 2; brightness.TabIndex = 3; hdr.TabIndex = 4; nightLight.TabIndex = 5; strength.TabIndex = 6; keepAwake.TabIndex = 7;
             ApplyDisplayMetrics();
         }
         private void ApplyDisplayMetrics()
@@ -254,13 +261,13 @@ namespace Oxp3PowerWidget
             powerLabel.FontSize = perGameSwitch.FontSize = compact ? 18 : 16;
             minimum.FontSize = maximum.FontSize = compact ? 14 : 12;
             connection.FontSize = compact ? 14 : 12;
-            brightnessLabel.FontSize = nightLight.FontSize = keepAwake.FontSize = powerLabel.FontSize;
+            brightnessLabel.FontSize = nightLight.FontSize = hdr.FontSize = keepAwake.FontSize = powerLabel.FontSize;
             brightnessValue.FontSize = targetWatts.FontSize;
             strengthLabel.FontSize = powerLabel.FontSize; strengthValue.FontSize = targetWatts.FontSize;
             header.Height = compact ? 40 : 36;
             gameIcon.Width = gameIcon.Height = iconFrame.Width = iconFrame.Height = compact ? 36 : 32;
             perGameSwitch.MinHeight = compact ? 52 : 48;
-            nightLight.MinHeight = keepAwake.MinHeight = perGameSwitch.MinHeight;
+            nightLight.MinHeight = hdr.MinHeight = keepAwake.MinHeight = perGameSwitch.MinHeight;
             mainPanel.Spacing = compact ? 12 : 10;
         }
         private void UpdateControls()
@@ -273,6 +280,8 @@ namespace Oxp3PowerWidget
             if (!powerReady) targetWatts.Text = powerStateRead ? "Unavailable" : "— W";
             perGameSwitch.IsEnabled = loaded && bridgeAvailable && connected && gameId.Length > 0 && !writing && pending == null;
             brightness.IsEnabled = loaded && brightnessAvailable;
+            hdr.IsEnabled = loaded && hdrAvailable && !hdrWriting;
+            hdr.Content = hdrAvailable ? "HDR" : "HDR unavailable";
             nightLight.IsEnabled = loaded && nightAvailable && !nightWriting;
             strength.IsEnabled = loaded && strengthAvailable && nightLight.IsChecked == true && !nightWriting;
             keepAwake.IsEnabled = loaded && awakeAvailable && !awakeWriting;
@@ -294,7 +303,7 @@ namespace Oxp3PowerWidget
             bool select = key == VirtualKey.Enter || key == VirtualKey.Space || key == VirtualKey.GamepadA;
             if (!(left || right || up || down || select)) return;
             e.Handled = true;
-            Control[] candidates = new Control[] { perGameSwitch, slider, brightness, nightLight, strength, keepAwake };
+            Control[] candidates = new Control[] { perGameSwitch, slider, brightness, hdr, nightLight, strength, keepAwake };
             var controls = new System.Collections.Generic.List<Control>(); foreach (var c in candidates) if (c.IsEnabled) controls.Add(c);
             if (controls.Count == 0) return;
             int index = controls.IndexOf(FocusManager.GetFocusedElement() as Control);
@@ -305,6 +314,7 @@ namespace Oxp3PowerWidget
             if (select && !e.KeyStatus.WasKeyDown)
             {
                 if (focused == perGameSwitch) { perGameSwitch.IsChecked = perGameSwitch.IsChecked != true; await SetScopeAsync(); }
+                else if (focused == hdr) { hdr.IsChecked = hdr.IsChecked != true; await SetHdrAsync(); }
                 else if (focused == nightLight) { nightLight.IsChecked = nightLight.IsChecked != true; await SetNightLightAsync(); }
                 else if (focused == keepAwake) { keepAwake.IsChecked = keepAwake.IsChecked != true; await SetKeepAwakeAsync(); }
             }
@@ -340,15 +350,19 @@ namespace Oxp3PowerWidget
         }
         private async Task RefreshDisplayAsync()
         {
-            if (!loaded || displayPolling || brightnessEdit.Busy || strengthEdit.Busy || nightWriting) return;
-            long brightnessRead = brightnessEdit.Revision, strengthRead = strengthEdit.Revision, nightRead = nightRevision;
+            if (!loaded || displayPolling || brightnessEdit.Busy || strengthEdit.Busy || nightWriting || hdrWriting) return;
+            long brightnessRead = brightnessEdit.Revision, strengthRead = strengthEdit.Revision, nightRead = nightRevision, hdrRead = hdrRevision;
             displayPolling = true;
             try
             {
                 var state = await bridge.RequestAsync("getDisplayState");
-                if (!brightnessEdit.AcceptRead(brightnessRead) || !strengthEdit.AcceptRead(strengthRead) || nightWriting || nightRead != nightRevision) return;
+                if (!brightnessEdit.AcceptRead(brightnessRead) || !strengthEdit.AcceptRead(strengthRead) || nightWriting || nightRead != nightRevision || hdrWriting || hdrRead != hdrRevision) return;
                 brightnessAvailable = state.GetNamedBoolean("brightnessAvailable", false); nightAvailable = state.GetNamedBoolean("nightLightAvailable", false);
                 updatingDisplay = true;
+                hdrAvailable = state.GetNamedBoolean("hdrAvailable", false);
+                var hdrState = state.GetNamedValue("hdr", JsonValue.CreateNullValue());
+                hdrValue = hdrState.ValueType == JsonValueType.Boolean && hdrState.GetBoolean();
+                hdr.IsChecked = hdrValue;
                 if (brightnessAvailable) brightness.Value = state.GetNamedNumber("brightness");
                 brightnessValue.Text = brightnessAvailable ? Math.Round(brightness.Value).ToString("0", CultureInfo.InvariantCulture) + "%" : "—%";
                 nightLight.IsChecked = nightAvailable && state.GetNamedBoolean("nightLight", false);
@@ -363,7 +377,7 @@ namespace Oxp3PowerWidget
                     _ = ResetCardSizeAsync();
                 }
             }
-            catch (Exception exception) { if (brightnessEdit.AcceptRead(brightnessRead) && strengthEdit.AcceptRead(strengthRead) && nightRead == nightRevision) brightnessAvailable = nightAvailable = strengthAvailable = false; await LogAsync(exception); }
+            catch (Exception exception) { if (brightnessEdit.AcceptRead(brightnessRead) && strengthEdit.AcceptRead(strengthRead) && nightRead == nightRevision && hdrRead == hdrRevision) brightnessAvailable = nightAvailable = strengthAvailable = hdrAvailable = false; await LogAsync(exception); }
             finally { updatingDisplay = displayPolling = false; UpdateControls(); }
         }
         private static void ScheduleDisplayWrite(DispatcherTimer write, DeferredSlider edit)
@@ -394,6 +408,19 @@ namespace Oxp3PowerWidget
             }
             catch (Exception exception) { Feedback(exception.Message); await LogAsync(exception); }
             finally { strengthEdit.Complete(); ScheduleDisplayWrite(strengthTimer, strengthEdit); if (!strengthEdit.Busy) await RefreshDisplayAsync(); }
+        }
+        private async Task SetHdrAsync()
+        {
+            if (!hdr.IsEnabled || updatingDisplay) return;
+            bool desired = hdr.IsChecked == true; hdrRevision++; hdrWriting = true; UpdateControls();
+            try
+            {
+                var state = await bridge.RequestAsync("setHdr", request => request["enabled"] = JsonValue.CreateBooleanValue(desired));
+                if (state.GetNamedBoolean("hdr", !desired) != desired) throw new IOException("Windows did not confirm HDR.");
+                hdrValue = desired;
+            }
+            catch (Exception exception) { hdr.IsChecked = hdrValue; Feedback(exception.Message); await LogAsync(exception); }
+            finally { hdrWriting = false; await RefreshDisplayAsync(); if (hdr.IsEnabled) hdr.Focus(FocusState.Keyboard); }
         }
         private async Task SetNightLightAsync()
         {
@@ -574,15 +601,15 @@ namespace Oxp3PowerWidget
                 bool compact = hostedWidget.CompactModeEnabled;
                 // Apply bounds on every host creation. A one-time resize alone
                 // let Game Bar fall back to the old manifest width on restart.
-                hostedWidget.MinWindowSize = new Size(464, 514);
-                hostedWidget.MaxWindowSize = new Size(compact ? 900 : 600, 640);
+                hostedWidget.MinWindowSize = new Size(464, 578);
+                hostedWidget.MaxWindowSize = new Size(compact ? 900 : 600, 704);
                 bool expanded = strengthCard.Visibility == Visibility.Visible;
                 string resizeKey = versionText + (compact ? ":compact" : ":desktop") + (expanded ? ":strength" : ":base");
                 var settings = ApplicationData.Current.LocalSettings.Values;
                 object previous;
                 if (settings.TryGetValue("cardResizeVersion", out previous) && String.Equals(previous as string, resizeKey, StringComparison.Ordinal)) return;
                 // One bounded migration per version, preserving later user resizing.
-                double width = Math.Max(464, Window.Current.Bounds.Width), height = expanded ? 614 : 514;
+                double width = Math.Max(464, Window.Current.Bounds.Width), height = expanded ? 678 : 578;
                 resizeState = new JsonObject
                 {
                     ["requestedWidth"] = JsonValue.CreateNumberValue(width),

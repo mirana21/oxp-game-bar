@@ -175,7 +175,7 @@ internal sealed class Controller : IDisposable
         var displayCommand = request.GetProperty("command").GetString();
         if (displayCommand == "ping") return new { alive = true };
         if (displayCommand is "getAwakeState" or "setKeepAwake") return awake.Command(request);
-        if (displayCommand is "getDisplayState" or "setBrightness" or "setNightLight" or "setNightLightStrength") return await display.Command(request, token);
+        if (displayCommand is "getDisplayState" or "setBrightness" or "setNightLight" or "setNightLightStrength" or "setHdr") return await display.Command(request, token);
         await gate.WaitAsync(token);
         try
         {
@@ -199,7 +199,7 @@ internal sealed class Controller : IDisposable
                     lastPlayingId = playing?.Id;
                     var usePerGame = playing != null && preferences.Enabled && preferences.Games.Any(g => g.Id == playing.Id && SamePath(g.ExePath, playing.ExePath) && g.UsePerGame);
                     var restartRequired = !connected && powerActivation.NeedsRestart();
-                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = "0.1.0.30", helperPackage = Native.PackageFamilyName ?? "" };
+                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = "0.1.0.31", helperPackage = Native.PackageFamilyName ?? "" };
                 }
                 case "setScope":
                 case "adjustWatts":
@@ -782,6 +782,7 @@ internal static class SelfTest
         var pong = Request(await pingController.Command(Request(new { command = "ping" }), token));
         Assert(pong.GetProperty("alive").GetBoolean() && pingNative.Reads == 0 && pingNative.Applications == 0, "Helper heartbeat must not read or write native power.");
         NightLightCodec.SelfTest();
+        HdrControlTests.Run();
         var slider = new Oxp3.Controls.DeferredSlider(); var now = DateTimeOffset.UtcNow;
         long oldRead = slider.Revision;
         slider.Queue(59, now); Assert(!slider.AcceptRead(oldRead), "Old brightness poll must not replace a local edit.");

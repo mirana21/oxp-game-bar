@@ -1,7 +1,7 @@
 param([switch]$SkipWidgetBuild, [string]$NodePath, [string]$SignToolPath)
 $ErrorActionPreference='Stop'
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version='0.1.0.30'
+$version='0.1.0.31'
 $runtimeRoot=Join-Path $projectRoot ('artifacts\release-helper-' + [Guid]::NewGuid().ToString('N'))
 $buildReceipt=Join-Path $projectRoot ('artifacts\widget-build-' + [Guid]::NewGuid().ToString('N') + '.json')
 if (-not $SkipWidgetBuild) { & (Join-Path $projectRoot 'widget\Build-Widget.ps1') -SelfContained -HelperDirectory $runtimeRoot -BuildReceiptPath $buildReceipt }
@@ -65,11 +65,11 @@ if (-not (Test-Path -LiteralPath $signTool)) { throw 'Windows SDK signing tool m
 & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Widget\OXP3.GamePower.msix')
 if($LASTEXITCODE -ne 0){throw 'Release package signing failed'}
 $readme=@'
-OXP3 Game Power — alpha 0.1.0.30
+OXP3 Game Power — alpha 0.1.0.31
 
 For Windows 11 x64, Intel ONEXPLAYER 3 and ONEXConsole.
 
-Per-game TDP, brightness, Night light, and Keep awake in a controller-friendly Game Bar widget.
+Per-game TDP, brightness, HDR, Night light, and Keep awake in a controller-friendly Game Bar widget.
 We built this because ONEXConsole's TDP controls are awkward to use while
 playing, and the ONEXPLAYER 3's Xbox fullscreen experience lacks quick
 brightness and Night light controls.
