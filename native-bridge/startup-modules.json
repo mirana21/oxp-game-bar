@@ -28,15 +28,15 @@
     },
     {
       "file": "startup-native.ps1",
-      "sha256": "b56caf03208427f4c031a7359603706b5c90fec5b74fedb345093ceddfc9b96e"
+      "sha256": "c0f248bd98fa76a4ff6082a6c9e15fc181915f539b0d5dc7ced3f5ebc7fb1b88"
     },
     {
       "file": "startup-native.vbs",
-      "sha256": "2cc976aa49d95b518e6f44e035e674f8dd029c2b2b2e569ca9beb7156cc93770"
+      "sha256": "cb3694bf83567bf8e88f776d815ea72c72ca464284758027c8b3c7d0569bedba"
     },
     {
       "file": "startup-task-common.ps1",
-      "sha256": "d553811d2fff4147d48d93809699785fecc195b6a1873dbdfd62a1b5ff356319"
+      "sha256": "455abcb863d2e89f7098e53d6c61706cf22ee0b79e79a5f6d67e720f528e39bb"
     },
     {
       "file": "recover-startup.ps1",

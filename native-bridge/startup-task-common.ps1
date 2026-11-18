@@ -164,7 +164,7 @@ function Register-Oxp3RecoveryTask([string]$RuntimeRoot) {
     # on vendor task registration/update, or on a disconnected helper request.
     # There is no resident watchdog or periodic process/timer.
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $RuntimeRoot 'recover-startup.ps1') + '"')
+    $action = New-ScheduledTaskAction -Execute (Join-Path $RuntimeRoot 'MaintenanceLauncher.exe') -Argument 'recover'
     $trigger = New-ScheduledTaskTrigger -AtLogOn -User $sid
     $trigger.Delay = 'PT2S'
     $principal = New-ScheduledTaskPrincipal -UserId $sid -LogonType Interactive -RunLevel Highest

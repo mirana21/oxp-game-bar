@@ -199,7 +199,7 @@ internal sealed class Controller : IDisposable
                     lastPlayingId = playing?.Id;
                     var usePerGame = playing != null && preferences.Enabled && preferences.Games.Any(g => g.Id == playing.Id && SamePath(g.ExePath, playing.ExePath) && g.UsePerGame);
                     var restartRequired = !connected && powerActivation.NeedsRestart();
-                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = "0.1.0.31", helperPackage = Native.PackageFamilyName ?? "" };
+                    return new { connected, restartRequired, powerMessage = Oxp3.Controls.PowerAvailability.Message(connected, restartRequired), nativeWatts = state?.Tdp, minWatts = state?.MinTdp ?? 4, maxWatts = state?.MaxTdp ?? 35, enabled = preferences.Enabled, globalWatts = preferences.GlobalWatts ?? restoreWatts ?? state?.Tdp, usePerGame, activeGameId = active?.Id ?? "", activeGameName = active?.Name ?? "", playingGame = playing == null ? null : new { id = playing.Id, name = playing.Name, store = playing.Store, exePath = playing.ExePath, savedWatts = playing.SavedWatts, iconPng = GameIcon(playing.ExePath) }, scanning, status, version = Native.PackageVersion, helperPackage = Native.PackageFamilyName ?? "" };
                 }
                 case "setScope":
                 case "adjustWatts":
@@ -658,6 +658,7 @@ internal static class Native
     {
         get { int length = 1024; var name = new StringBuilder(length); return GetCurrentPackageFullName(ref length, name) == 0 ? name.ToString() : null; }
     }
+    internal static string PackageVersion => PackageFullName?.Split('_').ElementAtOrDefault(1) ?? "";
     [DllImport("userenv.dll", CharSet = CharSet.Unicode, ExactSpelling = true)] private static extern int DeriveAppContainerSidFromAppContainerName(string name, out IntPtr sid);
     [DllImport("advapi32.dll", EntryPoint = "ConvertSidToStringSidW", ExactSpelling = true, SetLastError = true)] private static extern bool ConvertSidToStringSid(IntPtr sid, out IntPtr text);
     [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)] private static extern bool ConvertStringSecurityDescriptorToSecurityDescriptor(string text, uint revision, out IntPtr descriptor, out uint size);

@@ -51,7 +51,7 @@ function Assert-Compatibility {
 }
 $release = Assert-Bundle
 $runtimeRoot = Join-Path $codeRoot ('Versions\' + $release.version)
-if ([version]$release.version -ne [version]'0.1.0.31') { throw 'Unexpected release version.' }
+if ([version]$release.version -ne [version]'0.1.0.33') { throw 'Unexpected release version.' }
 Assert-StartupAdmin
 if ($Mode -eq 'Bootstrap') {
     # A Task Scheduler action runs outside the launcher's MSIX identity. Stage
@@ -172,6 +172,13 @@ foreach ($item in $modules.modules) {
     Protect-StartupCode $destination $false
 }
 foreach ($file in @('startup-modules.json')) { Copy-Item -LiteralPath (Join-Path $bundleRoot ('NativeBridge\' + $file)) -Destination (Join-Path $runtimeRoot $file) -Force; Protect-StartupCode (Join-Path $runtimeRoot $file) $false }
+foreach ($file in 'MaintenanceLauncher.exe','PowerBridge.exe') {
+    $source = Join-Path $bundleRoot ('Scripts\' + $file)
+    $launcher = Join-Path $runtimeRoot $file
+    Assert-Oxp3AuthPath $launcher
+    if (-not (Test-Path -LiteralPath $launcher) -or (Startup-Hash $launcher) -ne (Startup-Hash $source)) { Copy-Item -LiteralPath $source -Destination $launcher -Force }
+    Protect-StartupCode $launcher $false
+}
 if (-not (Test-Path -LiteralPath (Join-Path $runtimeRoot 'node.exe')) -or (Startup-Hash (Join-Path $runtimeRoot 'node.exe')) -ne $release.nodeSha256) { Copy-Item -LiteralPath (Join-Path $bundleRoot 'Runtime\node.exe') -Destination (Join-Path $runtimeRoot 'node.exe') -Force }
 Protect-StartupCode (Join-Path $runtimeRoot 'node.exe') $false
 Set-Oxp3StartupInstallation $startup $codeRoot $runtimeRoot
@@ -190,7 +197,7 @@ if ($nativeRunning -and $protectedParents.Count -eq 0) {
     Remove-Item -LiteralPath $pendingPower
 }
 Copy-ProtectedBundle
-Register-Oxp3UpdateTask $setupRoot
+Register-Oxp3UpdateTask $runtimeRoot
 $uninstallKey = 'HKLM:\Software\Microsoft\Windows\CurrentVersion\Uninstall\OXP3GamePower'
 New-Item -Path $uninstallKey -Force | Out-Null
 foreach ($pair in @(@('DisplayName','OXP3 Game Power'),@('DisplayVersion',$release.version),@('Publisher','OXP3Personal'),@('InstallLocation',$setupRoot),@('UninstallString',('"' + (Join-Path $setupRoot 'Setup.exe') + '" --remove')))) { New-ItemProperty -LiteralPath $uninstallKey -Name $pair[0] -Value $pair[1] -PropertyType String -Force | Out-Null }

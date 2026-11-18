@@ -107,9 +107,9 @@ function Test-UpdateBusy([string]$LocalRoot) {
     return $false
 }
 
-function Register-Oxp3UpdateTask([string]$SetupRoot) {
+function Register-Oxp3UpdateTask([string]$RuntimeRoot) {
     $sid = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
-    $action = New-ScheduledTaskAction -Execute (Join-Path $env:SystemRoot 'System32\WindowsPowerShell\v1.0\powershell.exe') -Argument ('-NoProfile -NonInteractive -ExecutionPolicy Bypass -WindowStyle Hidden -File "' + (Join-Path $SetupRoot 'Scripts\Update.ps1') + '"')
+    $action = New-ScheduledTaskAction -Execute (Join-Path $RuntimeRoot 'MaintenanceLauncher.exe') -Argument 'update'
     $signIn = New-ScheduledTaskTrigger -AtLogOn -User $sid
     $signIn.Delay = 'PT2M'
     $daily = New-ScheduledTaskTrigger -Daily -At '12:30'

@@ -33,6 +33,56 @@ function Start-VendorFallback {
     $scriptPath = 'C:\Program Files\OneXConsole\resources\resources\tools\OneXConsoleStartup.vbs'
     Start-Process -FilePath (Join-Path $env:SystemRoot 'System32\wscript.exe') -ArgumentList ('"' + $scriptPath + '"') -WindowStyle Hidden
 }
+function Get-StockPowerBridge {
+    $vendorDirectory = 'C:\Program Files\OneXConsole'
+    $vendor = Join-Path $vendorDirectory 'OneXConsole.exe'
+    if ((Get-Item -LiteralPath $vendor).VersionInfo.FileVersion -ne '0.10.4-fix3') { return $null }
+    $bridge = Join-Path $PSScriptRoot 'PowerBridge.exe'
+    $files = @{
+        $vendor = 'Shenzhen One-Netbook'
+        (Join-Path $vendorDirectory 'resources\resources\CompatLayerCT.exe') = 'Shenzhen One-Netbook'
+        (Join-Path $vendorDirectory 'resources\resources\tools\intel\IntelPowerPlugin.exe') = 'Shenzhen One-Netbook'
+        (Join-Path $vendorDirectory 'resources\resources\tools\intel\PowerPlugin.dll') = 'Intel Corporation'
+        (Join-Path $vendorDirectory 'resources\resources\PawnIOLib.dll') = 'namazso.eu'
+        $bridge = 'CN=OXP3Personal'
+    }
+    foreach ($file in $files.Keys) {
+        $sig = Get-AuthenticodeSignature -LiteralPath $file
+        if ($sig.Status -ne 'Valid' -or $sig.SignerCertificate.Subject -notlike ('*' + $files[$file] + '*')) {
+            throw 'A reviewed power component failed signature verification.'
+        }
+    }
+    return $bridge
+}
+function Start-EnabledWidgetHelper {
+    $key = 'HKCU:\Software\Classes\Local Settings\Software\Microsoft\Windows\CurrentVersion\AppModel\SystemAppData\OXP3.PowerWidget_pv4gfha69c7qe\OXP3PowerWidgetHelper'
+    $preference = Get-ItemProperty -LiteralPath $key -ErrorAction SilentlyContinue
+    if ($preference.State -in 2,4 -and (Get-AppxPackage -Name OXP3.PowerWidget).PackageFamilyName -eq 'OXP3.PowerWidget_pv4gfha69c7qe') {
+        Start-Process -FilePath 'ms-gamebar:activate/OXP3.PowerWidget_pv4gfha69c7qe_App_PowerProfiles' -WindowStyle Hidden
+    }
+}
+function Invoke-StartupNode([string]$Script, [switch]$Capture) {
+    $info = [Diagnostics.ProcessStartInfo]::new()
+    $info.FileName = $nodePath
+    $info.Arguments = '"' + (Join-Path $PSScriptRoot $Script) + '"'
+    $info.UseShellExecute = $false
+    $info.CreateNoWindow = $true
+    $info.RedirectStandardOutput = $Capture
+    $info.RedirectStandardError = $Capture
+    try { $process = [Diagnostics.Process]::Start($info) }
+    catch { return [pscustomobject]@{ ExitCode = 20; Output = $_.Exception.Message } }
+    try {
+        if ($Capture) {
+            $stdout = $process.StandardOutput.ReadToEndAsync()
+            $stderr = $process.StandardError.ReadToEndAsync()
+        }
+        $process.WaitForExit()
+        [pscustomobject]@{
+            ExitCode = $process.ExitCode
+            Output = if ($Capture) { ($stdout.GetAwaiter().GetResult() + $stderr.GetAwaiter().GetResult()).Trim() }
+        }
+    } finally { $process.Dispose() }
+}
 try {
     if ($PSScriptRoot -ne 'C:\Program Files\OXP3 Game Power Bridge' -and $PSScriptRoot -notmatch '^C:\\Program Files\\OXP3 Game Power Bridge\\Versions\\\d+\.\d+\.\d+\.\d+$') { throw 'Unreviewed startup-code location.' }
     if ((Get-FileHash -LiteralPath $nodePath -Algorithm SHA256).Hash.ToLowerInvariant() -ne $expectedNodeHash) { throw 'Unreviewed Node runtime.' }
@@ -45,16 +95,20 @@ try {
         if ($hash -ne $item.sha256) { throw 'Startup module changed after installation.' }
     }
     Write-StartupEvent 'startup-begin'
+    $stockPowerBridge = Get-StockPowerBridge
+    if ($stockPowerBridge) {
+        Start-VendorFallback
+        $brokerProcess = Start-Process -FilePath $stockPowerBridge -WindowStyle Hidden -PassThru
+        Write-StartupEvent 'stock-power-bridge-started' ('pid=' + $brokerProcess.Id)
+        try { Start-EnabledWidgetHelper }
+        catch { Write-StartupEvent 'widget-helper-activation-unavailable' $_.Exception.Message }
+        $brokerProcess.WaitForExit()
+        Write-StartupEvent 'stock-power-bridge-stopped' ('exit=' + $brokerProcess.ExitCode)
+        exit $brokerProcess.ExitCode
+    }
     Invoke-StartupPreparation {
-        # Capture native stderr as ordinary output: Windows PowerShell otherwise
-        # turns it into a terminating NativeCommandError before exit inspection.
-        $previousErrorPreference = $ErrorActionPreference
-        try {
-            $ErrorActionPreference = 'Continue'
-            $preflightOutput = & $nodePath (Join-Path $PSScriptRoot 'preflight-native.cjs') 2>&1
-            $preflightExit = $LASTEXITCODE
-        } finally { $ErrorActionPreference = $previousErrorPreference }
-        if ($preflightExit -ne 0) { throw ('Native preflight unavailable: ' + ($preflightOutput -join ' ')) }
+        $preflight = Invoke-StartupNode 'preflight-native.cjs' -Capture
+        if ($preflight.ExitCode -ne 0) { throw ('Native preflight unavailable: ' + $preflight.Output) }
     }
 } catch {
     # Retain an independent protected log even if profile resolution or script
@@ -68,10 +122,10 @@ try {
 # replacing it. Bootstrap errors are logged by the parent while native stays up.
 try {
     Write-StartupEvent 'private-launch-requested'
-    & $nodePath (Join-Path $PSScriptRoot 'launch-native.cjs') 2>$null
-    $launcherExitCode = $LASTEXITCODE
+    $launcherExitCode = (Invoke-StartupNode 'launch-native.cjs').ExitCode
 } catch {
-    $launcherExitCode = $LASTEXITCODE
+    Write-StartupEvent 'launcher-unavailable' $_.Exception.Message
+    $launcherExitCode = 31
 }
 # Exit 20 means prelaunch/OS-spawn failure and no native process/owned handles.
 # Every native process that was created exits as 0 or 31; never relaunch those.

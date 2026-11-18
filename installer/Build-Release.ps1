@@ -1,7 +1,7 @@
 param([switch]$SkipWidgetBuild, [string]$NodePath, [string]$SignToolPath)
 $ErrorActionPreference='Stop'
 $projectRoot=[IO.Path]::GetFullPath((Join-Path $PSScriptRoot '..'))
-$version='0.1.0.31'
+$version='0.1.0.33'
 $runtimeRoot=Join-Path $projectRoot ('artifacts\release-helper-' + [Guid]::NewGuid().ToString('N'))
 $buildReceipt=Join-Path $projectRoot ('artifacts\widget-build-' + [Guid]::NewGuid().ToString('N') + '.json')
 if (-not $SkipWidgetBuild) { & (Join-Path $projectRoot 'widget\Build-Widget.ps1') -SelfContained -HelperDirectory $runtimeRoot -BuildReceiptPath $buildReceipt }
@@ -14,6 +14,13 @@ $packageRoot=Join-Path $projectRoot ('widget\packages\uwp-6.2.14\Oxp3PowerWidget
 Copy-Item -LiteralPath (Join-Path $packageRoot ('Oxp3PowerWidget_' + $version + '_x64.msix')) -Destination (Join-Path $destination 'Widget\OXP3.GamePower.msix')
 Get-ChildItem -LiteralPath (Join-Path $packageRoot 'Dependencies\x64') -Filter '*.appx' | Copy-Item -Destination (Join-Path $destination 'Widget\Dependencies')
 foreach($file in @('SetupEngine.ps1','Environment.ps1','Update.ps1','UpdateSupport.ps1')){Copy-Item -LiteralPath (Join-Path $PSScriptRoot $file) -Destination (Join-Path $destination ('Scripts\' + $file))}
+$compiler=Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
+$launcher=Join-Path $destination 'Scripts\MaintenanceLauncher.exe'
+& $compiler /nologo /target:winexe /platform:x64 /optimize+ ('/out:'+$launcher) (Join-Path $PSScriptRoot 'MaintenanceLauncher.cs')
+if($LASTEXITCODE -ne 0){throw 'Maintenance launcher build failed'}
+$powerBridge=Join-Path $destination 'Scripts\PowerBridge.exe'
+& $compiler /nologo /target:winexe /platform:x64 /optimize+ /r:System.Web.Extensions.dll ('/out:'+$powerBridge) (Join-Path $PSScriptRoot 'PowerBridge.cs')
+if($LASTEXITCODE -ne 0){throw 'Power bridge build failed'}
 $bridgeRoot=Join-Path $projectRoot 'native-bridge'
 $modules=Get-Content -LiteralPath (Join-Path $bridgeRoot 'startup-modules.json') -Raw|ConvertFrom-Json
 foreach($item in $modules.modules){
@@ -62,10 +69,12 @@ Export-Certificate -Cert $certificate -FilePath (Join-Path $destination 'Publish
 $signTool=$SignToolPath
 if (-not $signTool) { $signTool=Join-Path ${env:ProgramFiles(x86)} 'Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe' }
 if (-not (Test-Path -LiteralPath $signTool)) { throw 'Windows SDK signing tool missing. Supply -SignToolPath.' }
-& $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Widget\OXP3.GamePower.msix')
-if($LASTEXITCODE -ne 0){throw 'Release package signing failed'}
+foreach ($file in @($launcher,$powerBridge,(Join-Path $destination 'Widget\OXP3.GamePower.msix'))) {
+    & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint $file
+    if ($LASTEXITCODE -ne 0) { throw ('Release signing failed: ' + $file) }
+}
 $readme=@'
-OXP3 Game Power — alpha 0.1.0.31
+OXP3 Game Power — alpha 0.1.0.33
 
 For Windows 11 x64, Intel ONEXPLAYER 3 and ONEXConsole.
 
@@ -94,12 +103,11 @@ $manifestHash=(Get-FileHash -LiteralPath (Join-Path $destination 'release.json')
 $source=(Get-Content -LiteralPath (Join-Path $PSScriptRoot 'Setup.cs') -Raw).Replace('@@MANIFESTSHA@@',$manifestHash)
 $generated=Join-Path $projectRoot 'artifacts\Setup.generated.cs'
 [IO.File]::WriteAllText($generated,$source,[Text.UTF8Encoding]::new($false))
-$compiler=Join-Path $env:SystemRoot 'Microsoft.NET\Framework64\v4.0.30319\csc.exe'
 & $compiler /nologo /target:winexe /platform:x64 /optimize+ ('/win32manifest:'+(Join-Path $PSScriptRoot 'Setup.manifest')) /r:System.Windows.Forms.dll /r:System.Drawing.dll /r:System.Web.Extensions.dll /r:Microsoft.CSharp.dll ('/out:'+(Join-Path $destination 'Setup.exe')) $generated
 if($LASTEXITCODE -ne 0){throw 'Setup executable build failed'}
 & $signTool sign /fd SHA256 /s My /sha1 $certificate.Thumbprint (Join-Path $destination 'Setup.exe')
 if($LASTEXITCODE -ne 0){throw 'Setup signing failed'}
-foreach($path in @('Setup.exe','Widget\OXP3.GamePower.msix')){& $signTool verify /pa (Join-Path $destination $path);if($LASTEXITCODE -ne 0){throw 'Release signature validation failed'}}
+foreach($path in @('Setup.exe','Widget\OXP3.GamePower.msix','Scripts\MaintenanceLauncher.exe','Scripts\PowerBridge.exe')){& $signTool verify /pa (Join-Path $destination $path);if($LASTEXITCODE -ne 0){throw 'Release signature validation failed'}}
 $expectedFiles=@($release.files.path) + @('release.json','Setup.exe')
 $actualFiles=@(Get-ChildItem -LiteralPath $destination -File -Recurse | ForEach-Object { $_.FullName.Substring($destination.Length+1) })
 if (Compare-Object $expectedFiles $actualFiles) { throw 'Unexpected file in release staging directory.' }

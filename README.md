@@ -22,6 +22,11 @@ To remove, choose **Remove** in Setup or uninstall **OXP3 Game Power** from Wind
 
 ## Release history
 
+### [0.1.0.33](https://github.com/mirana21/oxp-game-bar/releases/tag/v0.1.0.33)
+
+- Restored per-game wattage control with ONEXConsole 0.10.4-fix3 on the Intel ONEXPLAYER 3.
+- Startup, connection repair, and automatic update tasks now run without opening a PowerShell window.
+
 ### [0.1.0.31](https://github.com/mirana21/oxp-game-bar/releases/tag/v0.1.0.31)
 
 - Added an HDR toggle with controller support.
